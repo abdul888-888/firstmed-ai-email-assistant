@@ -1,0 +1,27 @@
+{
+  "$comment": "Canonical intent taxonomy from the PRD (Module 3). Used by intent classification (Phase 5) and the AI decision matrix. draft_allowed reflects the PRD AI Decision Matrix; false => always escalate to a human.",
+  "intents": [
+    { "key": "administrative", "label": "Administrative", "draft_allowed": true },
+    { "key": "pricing", "label": "Pricing", "draft_allowed": true },
+    { "key": "insurance", "label": "Insurance", "draft_allowed": true },
+    { "key": "opening_hours", "label": "Opening Hours", "draft_allowed": true },
+    { "key": "parking", "label": "Parking", "draft_allowed": true },
+    { "key": "contact_details", "label": "Contact Details", "draft_allowed": true },
+    { "key": "preparation_instructions", "label": "Preparation Instructions", "draft_allowed": true },
+    { "key": "service_availability", "label": "Service Availability", "draft_allowed": true },
+    { "key": "referral_questions", "label": "Referral Questions", "draft_allowed": true },
+    { "key": "appointment_booking", "label": "Appointment Booking", "draft_allowed": false },
+    { "key": "appointment_change", "label": "Appointment Change", "draft_allowed": false },
+    { "key": "appointment_cancellation", "label": "Appointment Cancellation", "draft_allowed": false },
+    { "key": "billing", "label": "Billing", "draft_allowed": true },
+    { "key": "billing_dispute", "label": "Billing Dispute", "draft_allowed": false },
+    { "key": "complaint", "label": "Complaint", "draft_allowed": false },
+    { "key": "medical_advice", "label": "Medical Advice", "draft_allowed": false },
+    { "key": "clinical_questions", "label": "Clinical Questions", "draft_allowed": false },
+    { "key": "laboratory_results", "label": "Laboratory Results", "draft_allowed": false },
+    { "key": "imaging_results", "label": "Imaging Results", "draft_allowed": false },
+    { "key": "emergency", "label": "Emergency", "draft_allowed": false },
+    { "key": "legal", "label": "Legal", "draft_allowed": false },
+    { "key": "unknown", "label": "Unknown", "draft_allowed": false }
+  ]
+}

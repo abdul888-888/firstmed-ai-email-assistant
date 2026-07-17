@@ -1,0 +1,73 @@
+# Docker Compose for local development of the FirstMed AI Email Assistant.
+# Brings up PostgreSQL, Redis, the FastAPI backend, and the Next.js frontend.
+#
+#   docker compose up --build
+#
+# Backend:  http://localhost:8000  (docs /docs)
+# Frontend: http://localhost:3000
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: firstmed-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-firstmed}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-firstmed}
+      POSTGRES_DB: ${POSTGRES_DB:-firstmed}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-firstmed} -d ${POSTGRES_DB:-firstmed}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: firstmed-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: firstmed-backend
+    env_file:
+      - .env
+    environment:
+      # Override hostnames so containers reach each other by service name.
+      POSTGRES_HOST: db
+      REDIS_HOST: redis
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: firstmed-frontend
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
