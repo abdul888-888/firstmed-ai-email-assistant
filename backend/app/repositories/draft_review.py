@@ -84,3 +84,9 @@ class DraftReviewRepository:
         await self.session.commit()
         await self.session.refresh(review)
         return review
+
+    async def assign(self, review: DraftReview, *, assigned_to: uuid.UUID | None) -> DraftReview:
+        review.assigned_to = assigned_to
+        await self.session.commit()
+        await self.session.refresh(review)
+        return review

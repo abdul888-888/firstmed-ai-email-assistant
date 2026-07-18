@@ -66,6 +66,7 @@ class DraftReviewRead(BaseModel):
     reviewed_at: datetime | None = None
     sent_at: datetime | None = None
     sent_message_id: str | None = None
+    assigned_to: uuid.UUID | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

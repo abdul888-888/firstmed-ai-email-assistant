@@ -65,6 +65,10 @@ class DraftReview(Base, TimestampMixin):
     gmail_draft_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     reviewed_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Phase 11: staff member this review has been handed off to for collaboration.
+    assigned_to: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id"), nullable=True, index=True
+    )
     # Reviewer note (e.g. reject reason).
     review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Set once the approved draft is sent via Gmail.

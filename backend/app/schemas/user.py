@@ -27,3 +27,8 @@ class UserRead(UserBase):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+
+
+class UserList(BaseModel):
+    users: list[UserRead] = Field(default_factory=list)
+    count: int = 0

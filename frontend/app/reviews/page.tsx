@@ -8,6 +8,7 @@ import {
   ClipboardCheck,
   Loader2,
   Mail,
+  MessageSquare,
   Send,
   ShieldAlert,
   ShieldCheck,
@@ -21,6 +22,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  addReviewNote,
+  assignReview,
+  listReviewNotes,
+  listTeamMembers,
+  type ReviewNote,
+  type TeamMember,
+} from "@/lib/admin";
 import { API_BASE_URL } from "@/lib/api";
 import { authHeader, getToken, startGoogleSignIn } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -41,6 +50,7 @@ type Review = {
   citations: Citation[];
   status: string;
   gmail_draft_id: string | null;
+  assigned_to: string | null;
 };
 
 type Template = {
@@ -67,6 +77,7 @@ export default function ReviewsPage() {
   const [pending, setPending] = useState<Review[]>([]);
   const [approved, setApproved] = useState<Review[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [signedIn, setSignedIn] = useState(true);
@@ -95,6 +106,12 @@ export default function ReviewsPage() {
       // Canned-response templates for the draft editor (best-effort).
       const t = await fetch(`${API_BASE_URL}/api/v1/templates`, { headers: { ...authHeader() } });
       if (t.ok) setTemplates((await t.json()).templates ?? []);
+      // Active staff for the assignee picker (best-effort).
+      try {
+        setTeamMembers(await listTeamMembers());
+      } catch {
+        setTeamMembers([]);
+      }
     } catch (e) {
       if (e instanceof Error && e.message.includes("401")) setSignedIn(false);
       else setError(e instanceof Error ? e.message : "Failed to load");
@@ -140,6 +157,15 @@ export default function ReviewsPage() {
     await api(`/${id}/send`, { method: "POST" });
     setApproved((rs) => rs.filter((r) => r.id !== id));
     flash("Sent ✓ The reply was delivered.");
+  }
+
+  async function assign(id: string, assignedTo: string | null) {
+    const updated = (await assignReview(id, assignedTo)) as Review;
+    const patch = (rs: Review[]) =>
+      rs.map((r) => (r.id === id ? { ...r, assigned_to: updated.assigned_to } : r));
+    setPending(patch);
+    setApproved(patch);
+    flash(assignedTo ? "Review assigned." : "Review unassigned.");
   }
 
   return (
@@ -205,9 +231,11 @@ export default function ReviewsPage() {
                     key={r.id}
                     review={r}
                     templates={templates}
+                    teamMembers={teamMembers}
                     onSave={(body) => saveEdit(r.id, body)}
                     onApprove={(body) => approve(r.id, body)}
                     onReject={() => reject(r.id)}
+                    onAssign={(assignedTo) => assign(r.id, assignedTo)}
                   />
                 ))
               )}
@@ -218,7 +246,13 @@ export default function ReviewsPage() {
                 <EmptyRow text="Nothing approved yet." />
               ) : (
                 approved.map((r) => (
-                  <ApprovedCard key={r.id} review={r} onSend={() => send(r.id)} />
+                  <ApprovedCard
+                    key={r.id}
+                    review={r}
+                    teamMembers={teamMembers}
+                    onSend={() => send(r.id)}
+                    onAssign={(assignedTo) => assign(r.id, assignedTo)}
+                  />
                 ))
               )}
             </Section>
@@ -275,7 +309,15 @@ function MetaRow({ review }: { review: Review }) {
   );
 }
 
-function CardHead({ review }: { review: Review }) {
+function CardHead({
+  review,
+  teamMembers,
+  onAssign,
+}: {
+  review: Review;
+  teamMembers: TeamMember[];
+  onAssign: (assignedTo: string | null) => Promise<void>;
+}) {
   return (
     <CardHeader className="flex-row items-start justify-between gap-4">
       <div className="min-w-0">
@@ -285,23 +327,68 @@ function CardHead({ review }: { review: Review }) {
         </CardTitle>
         <p className="mt-1 truncate text-sm text-slate-500">from {review.sender}</p>
       </div>
-      <ClassificationBadge review={review} />
+      <div className="flex shrink-0 flex-col items-end gap-2">
+        <ClassificationBadge review={review} />
+        <AssigneeSelect review={review} teamMembers={teamMembers} onAssign={onAssign} />
+      </div>
     </CardHeader>
+  );
+}
+
+function AssigneeSelect({
+  review,
+  teamMembers,
+  onAssign,
+}: {
+  review: Review;
+  teamMembers: TeamMember[];
+  onAssign: (assignedTo: string | null) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  async function handleChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    setBusy(true);
+    try {
+      await onAssign(e.target.value || null);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <select
+      value={review.assigned_to ?? ""}
+      onChange={handleChange}
+      disabled={busy}
+      aria-label="Assign to a team member"
+      className="max-w-[200px] rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 shadow-sm focus:border-blue-500 focus:outline-none disabled:opacity-60"
+    >
+      <option value="">Unassigned</option>
+      {teamMembers.map((m) => (
+        <option key={m.id} value={m.id}>
+          {m.full_name || m.email}
+        </option>
+      ))}
+    </select>
   );
 }
 
 function PendingCard({
   review,
   templates,
+  teamMembers,
   onSave,
   onApprove,
   onReject,
+  onAssign,
 }: {
   review: Review;
   templates: Template[];
+  teamMembers: TeamMember[];
   onSave: (body: string) => Promise<void>;
   onApprove: (body: string) => Promise<void>;
   onReject: () => Promise<void>;
+  onAssign: (assignedTo: string | null) => Promise<void>;
 }) {
   const [body, setBody] = useState(review.draft_body);
   const [busy, setBusy] = useState<null | "save" | "approve" | "reject">(null);
@@ -324,7 +411,7 @@ function PendingCard({
 
   return (
     <Card>
-      <CardHead review={review} />
+      <CardHead review={review} teamMembers={teamMembers} onAssign={onAssign} />
       <CardContent className="space-y-4">
         <MetaRow review={review} />
         <div>
@@ -358,6 +445,7 @@ function PendingCard({
           />
         </div>
         {review.citations.length > 0 && <Citations citations={review.citations} />}
+        <NotesPanel reviewId={review.id} />
         <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 pt-4">
           <Button variant="outline" onClick={run("reject", onReject)} disabled={busy !== null}>
             {busy === "reject" ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
@@ -388,15 +476,26 @@ function PendingCard({
   );
 }
 
-function ApprovedCard({ review, onSend }: { review: Review; onSend: () => Promise<void> }) {
+function ApprovedCard({
+  review,
+  teamMembers,
+  onSend,
+  onAssign,
+}: {
+  review: Review;
+  teamMembers: TeamMember[];
+  onSend: () => Promise<void>;
+  onAssign: (assignedTo: string | null) => Promise<void>;
+}) {
   const [busy, setBusy] = useState(false);
   return (
     <Card>
-      <CardHead review={review} />
+      <CardHead review={review} teamMembers={teamMembers} onAssign={onAssign} />
       <CardContent className="space-y-4">
         <div className="whitespace-pre-line rounded-lg border border-slate-200 bg-white p-4 text-sm leading-relaxed text-slate-800 shadow-inner">
           {review.draft_body}
         </div>
+        <NotesPanel reviewId={review.id} />
         <div className="flex items-center justify-between gap-2 border-t border-slate-100 pt-4">
           <span className="text-xs text-slate-400">In Gmail Drafts · not yet sent</span>
           <Button
@@ -433,6 +532,101 @@ function Citations({ citations }: { citations: Citation[] }) {
           <span className="truncate">{c.title}</span>
         </span>
       ))}
+    </div>
+  );
+}
+
+function NotesPanel({ reviewId }: { reviewId: string }) {
+  const [open, setOpen] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [loadingNotes, setLoadingNotes] = useState(false);
+  const [notes, setNotes] = useState<ReviewNote[]>([]);
+  const [draft, setDraft] = useState("");
+  const [posting, setPosting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && !loaded) {
+      setLoadingNotes(true);
+      setError(null);
+      try {
+        setNotes(await listReviewNotes(reviewId));
+        setLoaded(true);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to load notes");
+      } finally {
+        setLoadingNotes(false);
+      }
+    }
+  }
+
+  async function addNote() {
+    const body = draft.trim();
+    if (!body) return;
+    setPosting(true);
+    setError(null);
+    try {
+      const note = await addReviewNote(reviewId, body);
+      setNotes((ns) => [...ns, note]);
+      setDraft("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to add note");
+    } finally {
+      setPosting(false);
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-slate-200">
+      <button
+        type="button"
+        onClick={() => void toggle()}
+        className="flex w-full items-center justify-between gap-2 px-3.5 py-2.5 text-left text-xs font-medium text-slate-600 hover:bg-slate-50"
+      >
+        <span className="flex items-center gap-1.5">
+          <MessageSquare className="h-3.5 w-3.5" />
+          Internal notes{loaded && notes.length > 0 ? ` (${notes.length})` : ""}
+        </span>
+        <span className="text-slate-400">{open ? "Hide" : "Show"}</span>
+      </button>
+      {open && (
+        <div className="space-y-3 border-t border-slate-100 px-3.5 py-3">
+          {loadingNotes ? (
+            <p className="text-xs text-slate-400">Loading notes…</p>
+          ) : notes.length === 0 ? (
+            <p className="text-xs text-slate-400">No notes yet.</p>
+          ) : (
+            <ul className="space-y-2">
+              {notes.map((n) => (
+                <li key={n.id} className="rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                  <p className="whitespace-pre-line">{n.body}</p>
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    {new Date(n.created_at).toLocaleString()}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+          {error && <p className="text-xs text-red-600">{error}</p>}
+          <div className="flex items-start gap-2">
+            <Textarea
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="Add an internal note…"
+              className="min-h-[60px] flex-1 text-xs"
+            />
+            <Button
+              variant="outline"
+              onClick={() => void addNote()}
+              disabled={posting || !draft.trim()}
+            >
+              {posting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add"}
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

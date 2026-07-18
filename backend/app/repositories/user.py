@@ -42,3 +42,10 @@ class UserRepository:
         await self.session.commit()
         await self.session.refresh(user)
         return user
+
+    async def list_active(self) -> list[User]:
+        """Active staff, for assignment/collaboration pickers."""
+        result = await self.session.execute(
+            select(User).where(User.is_active.is_(True)).order_by(User.full_name, User.email)
+        )
+        return list(result.scalars().all())
