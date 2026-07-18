@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.document import DocumentSource
 from app.repositories.document import DocumentRepository
+from app.services.embedding_service import EmbeddingService
 
 # Notion-style knowledge base + one prior Gmail thread (so both source types cite).
 DOCS: list[dict] = [
@@ -128,8 +129,13 @@ async def main() -> None:
             )
         counts = await repo.counts_by_source()
 
+        # Phase 9: embed the seeded SOPs (no-op if the embedder is unavailable).
+        embeddings = EmbeddingService(session)
+        embedded = await embeddings.backfill()
+
     print(f"DB: {settings.sqlalchemy_database_uri}")
     print(f"Seeded {len(DOCS)} documents. Index counts by source: {counts}")
+    print(f"Embedded {embedded} documents ({'available' if embedded else 'lexical-only'}).")
 
 
 if __name__ == "__main__":

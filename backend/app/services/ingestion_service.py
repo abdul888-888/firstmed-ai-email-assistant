@@ -13,6 +13,7 @@ from app.core.logging import get_logger
 from app.models.document import DocumentSource
 from app.models.user import User
 from app.repositories.document import DocumentRepository
+from app.services.embedding_service import EmbeddingService
 from app.services.gmail_service import GmailNotConnectedError, GmailService
 from app.services.notion_service import NotionService
 
@@ -101,8 +102,15 @@ class IngestionService:
         else:
             notes.append("notion: not configured")
 
+        # Phase 9: embed any documents missing an up-to-date vector.
+        embeddings = EmbeddingService(self.session)
+        embeddings_indexed = await embeddings.backfill()
+        if not embeddings.available:
+            notes.append("embeddings: unavailable (lexical only)")
+
         return {
             "gmail_indexed": gmail_indexed,
             "notion_indexed": notion_indexed,
+            "embeddings_indexed": embeddings_indexed,
             "notes": notes,
         }

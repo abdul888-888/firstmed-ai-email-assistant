@@ -36,6 +36,11 @@ class Document(Base, TimestampMixin):
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
     url: Mapped[str | None] = mapped_column(Text, nullable=True)
     doc_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    # Semantic-retrieval vector (Phase 9). Stored as a JSON array for
+    # SQLite/PostgreSQL portability; ``embedding_model`` records which model
+    # produced it so stale vectors can be re-embedded on a model change.
+    embedding: Mapped[list[float] | None] = mapped_column(JSON, nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     def __repr__(self) -> str:  # pragma: no cover - debug helper
         return f"<Document source={self.source} source_id={self.source_id!r}>"

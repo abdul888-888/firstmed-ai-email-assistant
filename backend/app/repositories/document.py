@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document import Document
 
+__all__ = ["DocumentRepository"]
+
 
 class DocumentRepository:
     """Persistence + candidate retrieval for the unified document index."""
@@ -47,6 +49,30 @@ class DocumentRepository:
         doc.url = url
         doc.doc_metadata = doc_metadata or {}
 
+        await self.session.commit()
+        await self.session.refresh(doc)
+        return doc
+
+    async def list_needing_embedding(self, model: str, *, limit: int = 1000) -> list[Document]:
+        """Documents with no embedding, or one from a different model (stale)."""
+        result = await self.session.execute(
+            select(Document)
+            .where(
+                or_(
+                    Document.embedding.is_(None),
+                    Document.embedding_model.is_(None),
+                    Document.embedding_model != model,
+                )
+            )
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def set_embedding(
+        self, doc: Document, *, embedding: list[float], model: str
+    ) -> Document:
+        doc.embedding = embedding
+        doc.embedding_model = model
         await self.session.commit()
         await self.session.refresh(doc)
         return doc

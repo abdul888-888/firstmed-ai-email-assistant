@@ -37,6 +37,7 @@ class SearchResponse(BaseModel):
 class ReindexResult(BaseModel):
     gmail_indexed: int
     notion_indexed: int
+    embeddings_indexed: int = 0
     notes: list[str] = Field(default_factory=list)
 
 

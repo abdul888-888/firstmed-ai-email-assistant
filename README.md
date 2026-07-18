@@ -26,7 +26,7 @@ Each phase compiles and runs before the next begins.
 | 6 | Workflow Intelligence Engine | ✅ Done |
 | 7 | Template Management | ⏳ Planned |
 | 8 | Human Review Dashboard | ✅ Done (edit / approve / reject / send) |
-| 9 | Semantic Retrieval (embeddings / pgvector) | ⏳ Planned |
+| 9 | Semantic Retrieval (embeddings) | ✅ Done (fastembed local; hybrid RRF) |
 | 10 | Healzz Integration | ⏳ Planned |
 | 11 | Internal Collaboration | ⏳ Planned |
 | 12 | Analytics & Reporting | ⏳ Planned |

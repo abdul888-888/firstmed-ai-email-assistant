@@ -76,6 +76,16 @@ class Settings(BaseSettings):
     ai_model: str = "claude-haiku-4-5"
     ai_max_tokens: int = 4096
 
+    # --- Embeddings / semantic retrieval (Phase 9) ---
+    # Provider is swappable: local (fastembed, no key) | openai | voyage.
+    embedding_provider: str = "local"
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
+    embedding_dim: int = 384
+    openai_api_key: str = ""
+    voyage_api_key: str = ""
+    # How the index ranks: hybrid (lexical + semantic RRF) | semantic | lexical.
+    retrieval_mode: str = "hybrid"
+
     # --- Database ---
     postgres_user: str = "firstmed"
     postgres_password: str = "firstmed"
@@ -120,6 +130,23 @@ class Settings(BaseSettings):
     def ai_configured(self) -> bool:
         """True when an Anthropic API key is set."""
         return bool(self.anthropic_api_key)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def embedding_configured(self) -> bool:
+        """True when the selected embedding provider can be used.
+
+        ``local`` needs no key (the fastembed dependency is checked at runtime and
+        degrades to lexical search if absent); the API providers need their key.
+        """
+        provider = self.embedding_provider.lower()
+        if provider == "local":
+            return True
+        if provider == "openai":
+            return bool(self.openai_api_key)
+        if provider == "voyage":
+            return bool(self.voyage_api_key)
+        return False
 
     @computed_field  # type: ignore[prop-decorator]
     @property
