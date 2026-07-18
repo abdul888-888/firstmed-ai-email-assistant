@@ -5,9 +5,15 @@ the OAuth authorization-code flow, provisions/links the staff user, stores their
 (encrypted) Gmail credentials, and issues the same JWT.
 """
 
-from __future__ import annotations
+# NOTE: no ``from __future__ import annotations`` here (deliberately, unlike most
+# other modules in this codebase). slowapi's ``@limiter.limit(...)`` decorator
+# wraps these endpoints, and FastAPI resolves string annotations using the
+# *wrapper's* ``__globals__`` (slowapi's module, not this one) — under postponed
+# evaluation that breaks dependency/body-model resolution for the decorated
+# routes (e.g. ``UserCreate`` silently falls back to a query param). Eager
+# (real, non-string) annotations sidestep this entirely.
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +23,7 @@ from app.core.config import settings
 from app.core.crypto import encrypt
 from app.core.database import get_db
 from app.core.logging import get_logger
+from app.core.rate_limit import AUTH_RATE_LIMIT, limiter
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models.user import User
 from app.repositories.google_credential import GoogleCredentialRepository
@@ -43,7 +50,9 @@ def _require_google_configured() -> None:
     status_code=status.HTTP_201_CREATED,
     summary="Register a new staff user",
 )
+@limiter.limit(AUTH_RATE_LIMIT)
 async def register(
+    request: Request,
     payload: UserCreate,
     session: AsyncSession = Depends(get_db),
 ) -> User:
@@ -64,8 +73,10 @@ async def register(
 
 
 @router.post("/login", response_model=Token, summary="Obtain an access token")
+@limiter.limit(AUTH_RATE_LIMIT)
 async def login(
-    form_data: OAuth2PasswordRequestForm = Depends(),
+    request: Request,
+    form_data: OAuth2PasswordRequestForm = Depends(OAuth2PasswordRequestForm),
     session: AsyncSession = Depends(get_db),
 ) -> Token:
     # OAuth2 form uses ``username``; we treat it as the email.
@@ -103,7 +114,8 @@ async def me(current_user: User = Depends(get_current_user)) -> User:
     response_model=GoogleAuthorizationURL,
     summary="Begin Google OAuth (returns the consent-screen URL)",
 )
-async def google_login() -> GoogleAuthorizationURL:
+@limiter.limit(AUTH_RATE_LIMIT)
+async def google_login(request: Request) -> GoogleAuthorizationURL:
     _require_google_configured()
     state = google_oauth.make_state()
     return GoogleAuthorizationURL(
@@ -116,7 +128,9 @@ async def google_login() -> GoogleAuthorizationURL:
     "/google/callback",
     summary="Google OAuth redirect target; provisions the user and issues a token",
 )
+@limiter.limit(AUTH_RATE_LIMIT)
 async def google_callback(
+    request: Request,
     code: str | None = Query(default=None),
     state: str | None = Query(default=None),
     error: str | None = Query(default=None),

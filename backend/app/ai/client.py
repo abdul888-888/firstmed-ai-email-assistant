@@ -42,7 +42,9 @@ class AINotConfiguredError(AIError):
 
 class AIClient:
     def __init__(self, *, api_key: str | None = None, model: str | None = None) -> None:
-        self._api_key = api_key if api_key is not None else settings.anthropic_api_key
+        self._api_key = (
+            api_key if api_key is not None else settings.anthropic_api_key.get_secret_value()
+        )
         self.model = model or settings.ai_model
         self._client: Any = None
 

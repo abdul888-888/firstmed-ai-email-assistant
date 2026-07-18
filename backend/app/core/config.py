@@ -11,7 +11,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import computed_field, field_validator, model_validator
+from pydantic import SecretStr, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["development", "staging", "production", "test"]
@@ -41,13 +41,13 @@ class Settings(BaseSettings):
     api_v1_prefix: str = "/api/v1"
 
     # --- Security / auth ---
-    secret_key: str = "change-me-in-production"
+    secret_key: SecretStr = SecretStr("change-me-in-production")
     access_token_expire_minutes: int = 60
     algorithm: str = "HS256"
     backend_cors_origins: list[str] = ["http://localhost:3000"]
     # Fernet key (urlsafe base64, 32 bytes) for encrypting stored OAuth tokens.
     # Empty => a deterministic key is derived from ``secret_key`` (dev only).
-    token_encryption_key: str = ""
+    token_encryption_key: SecretStr = SecretStr("")
 
     # --- Frontend ---
     # Where the OAuth callback redirects the browser after login succeeds.
@@ -55,7 +55,7 @@ class Settings(BaseSettings):
 
     # --- Google OAuth / Gmail (Phase 2) ---
     google_client_id: str = ""
-    google_client_secret: str = ""
+    google_client_secret: SecretStr = SecretStr("")
     google_redirect_uri: str = "http://localhost:8000/api/v1/auth/google/callback"
     # Shared clinical inbox address; empty => operate on the signed-in mailbox ("me").
     gmail_shared_inbox: str = ""
@@ -69,16 +69,16 @@ class Settings(BaseSettings):
     ]
 
     # --- Notion (Phase 3) ---
-    notion_api_key: str = ""
+    notion_api_key: SecretStr = SecretStr("")
     notion_root_page_id: str = ""
     notion_version: str = "2022-06-28"
 
     # --- Healzz (Phase 10) ---
     healzz_api_base_url: str = ""
-    healzz_api_key: str = ""
+    healzz_api_key: SecretStr = SecretStr("")
 
     # --- AI (Phase 5) ---
-    anthropic_api_key: str = ""
+    anthropic_api_key: SecretStr = SecretStr("")
     # Active, cost-friendly default. Haiku 4.5 supports structured outputs (triage)
     # but NOT adaptive thinking — the AI client gates thinking on model support.
     ai_model: str = "claude-haiku-4-5"
@@ -89,14 +89,14 @@ class Settings(BaseSettings):
     embedding_provider: str = "local"
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     embedding_dim: int = 384
-    openai_api_key: str = ""
-    voyage_api_key: str = ""
+    openai_api_key: SecretStr = SecretStr("")
+    voyage_api_key: SecretStr = SecretStr("")
     # How the index ranks: hybrid (lexical + semantic RRF) | semantic | lexical.
     retrieval_mode: str = "hybrid"
 
     # --- Database ---
     postgres_user: str = "firstmed"
-    postgres_password: str = "firstmed"
+    postgres_password: SecretStr = SecretStr("firstmed")
     postgres_db: str = "firstmed"
     postgres_host: str = "localhost"
     postgres_port: int = 5432
@@ -168,7 +168,7 @@ class Settings(BaseSettings):
         if self.database_url:
             return self.database_url
         return (
-            f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
+            f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password.get_secret_value()}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
@@ -191,13 +191,13 @@ class Settings(BaseSettings):
             return self
 
         problems: list[str] = []
-        if self.secret_key.strip().lower() in _INSECURE_SECRET_KEYS:
+        if self.secret_key.get_secret_value().strip().lower() in _INSECURE_SECRET_KEYS:
             problems.append("SECRET_KEY must be set to a strong, unique value")
-        if not self.token_encryption_key:
+        if not self.token_encryption_key.get_secret_value():
             problems.append(
                 "TOKEN_ENCRYPTION_KEY must be set explicitly (no derived dev fallback)"
             )
-        if self.postgres_password.strip().lower() in _INSECURE_DB_PASSWORDS:
+        if self.postgres_password.get_secret_value().strip().lower() in _INSECURE_DB_PASSWORDS:
             problems.append("POSTGRES_PASSWORD must not use a development default")
 
         if problems:

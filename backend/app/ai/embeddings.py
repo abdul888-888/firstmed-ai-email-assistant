@@ -142,11 +142,11 @@ def build_embedder() -> Embedder:
     if provider == "openai":
         if not settings.openai_api_key:
             raise EmbeddingError("OPENAI_API_KEY is not set")
-        return OpenAIEmbedder(settings.embedding_model, settings.openai_api_key)
+        return OpenAIEmbedder(settings.embedding_model, settings.openai_api_key.get_secret_value())
     if provider == "voyage":
         if not settings.voyage_api_key:
             raise EmbeddingError("VOYAGE_API_KEY is not set")
-        return VoyageEmbedder(settings.embedding_model, settings.voyage_api_key)
+        return VoyageEmbedder(settings.embedding_model, settings.voyage_api_key.get_secret_value())
     raise EmbeddingError(f"Unknown EMBEDDING_PROVIDER: {settings.embedding_provider}")
 
 

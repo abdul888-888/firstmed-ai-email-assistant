@@ -30,8 +30,12 @@ def _derive_key_from_secret(secret: str) -> bytes:
 
 @lru_cache
 def _fernet() -> Fernet:
-    key = settings.token_encryption_key.strip()
-    key_bytes = key.encode("utf-8") if key else _derive_key_from_secret(settings.secret_key)
+    key = settings.token_encryption_key.get_secret_value().strip()
+    key_bytes = (
+        key.encode("utf-8")
+        if key
+        else _derive_key_from_secret(settings.secret_key.get_secret_value())
+    )
     return Fernet(key_bytes)
 
 

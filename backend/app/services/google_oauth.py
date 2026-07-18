@@ -67,13 +67,15 @@ def make_state() -> str:
         "iat": now,
         "exp": now + dt.timedelta(seconds=_STATE_TTL_SECONDS),
     }
-    return jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
+    return jwt.encode(payload, settings.secret_key.get_secret_value(), algorithm=settings.algorithm)
 
 
 def verify_state(state: str) -> bool:
     """Validate a state token produced by :func:`make_state`."""
     try:
-        payload = jwt.decode(state, settings.secret_key, algorithms=[settings.algorithm])
+        payload = jwt.decode(
+            state, settings.secret_key.get_secret_value(), algorithms=[settings.algorithm]
+        )
     except jwt.PyJWTError:
         return False
     return payload.get("type") == _STATE_TYPE
@@ -116,7 +118,7 @@ async def exchange_code(code: str, *, client: httpx.AsyncClient | None = None) -
     payload = {
         "code": code,
         "client_id": settings.google_client_id,
-        "client_secret": settings.google_client_secret,
+        "client_secret": settings.google_client_secret.get_secret_value(),
         "redirect_uri": settings.google_redirect_uri,
         "grant_type": "authorization_code",
     }
@@ -130,7 +132,7 @@ async def refresh_access_token(
     payload = {
         "refresh_token": refresh_token,
         "client_id": settings.google_client_id,
-        "client_secret": settings.google_client_secret,
+        "client_secret": settings.google_client_secret.get_secret_value(),
         "grant_type": "refresh_token",
     }
     return await _post_token(payload, client=client)

@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.repositories.google_credential import GoogleCredentialRepository
 from app.repositories.user import UserRepository
 from app.services import google_oauth
+from pydantic import SecretStr
 
 LOGIN_URL = "/api/v1/auth/google/login"
 CALLBACK = "/api/v1/auth/google/callback"
@@ -16,12 +17,12 @@ CALLBACK = "/api/v1/auth/google/callback"
 @pytest.fixture
 def google_configured(monkeypatch):
     monkeypatch.setattr(settings, "google_client_id", "cid")
-    monkeypatch.setattr(settings, "google_client_secret", "secret")
+    monkeypatch.setattr(settings, "google_client_secret", SecretStr("secret"))
 
 
 async def test_google_login_requires_config(client, monkeypatch):
     monkeypatch.setattr(settings, "google_client_id", "")
-    monkeypatch.setattr(settings, "google_client_secret", "")
+    monkeypatch.setattr(settings, "google_client_secret", SecretStr(""))
     resp = await client.get(LOGIN_URL)
     assert resp.status_code == 503
 

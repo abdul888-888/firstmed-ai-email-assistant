@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import pytest
 from app.core.config import settings
+from pydantic import SecretStr
 
 WF = "/api/v1/workflows/gmail/msg-1"
 
 
 @pytest.fixture
 def ai_configured(monkeypatch):
-    monkeypatch.setattr(settings, "anthropic_api_key", "test-key")
+    monkeypatch.setattr(settings, "anthropic_api_key", SecretStr("test-key"))
 
 
 async def _auth_token(client, email: str) -> str:
@@ -82,7 +83,7 @@ async def test_workflow_requires_auth(client):
 
 
 async def test_workflow_not_configured(client, monkeypatch):
-    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    monkeypatch.setattr(settings, "anthropic_api_key", SecretStr(""))
     token = await _auth_token(client, "wf-nc@firstmed.com")
     resp = await client.post(WF, headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 503

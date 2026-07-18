@@ -307,8 +307,9 @@ async def test_gmail_drafts_requires_auth(client):
 
 async def test_gmail_draft_alias_requires_connection(client, monkeypatch):
     from app.core.config import settings
+    from pydantic import SecretStr
 
-    monkeypatch.setattr(settings, "anthropic_api_key", "test-key")
+    monkeypatch.setattr(settings, "anthropic_api_key", SecretStr("test-key"))
     token = await _auth_token(client, email="alias1@firstmed.com")
     resp = await client.post(
         "/api/v1/gmail/messages/msg-1/draft",
@@ -319,8 +320,9 @@ async def test_gmail_draft_alias_requires_connection(client, monkeypatch):
 
 async def test_gmail_draft_alias_not_configured(client, monkeypatch):
     from app.core.config import settings
+    from pydantic import SecretStr
 
-    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    monkeypatch.setattr(settings, "anthropic_api_key", SecretStr(""))
     token = await _auth_token(client, email="alias2@firstmed.com")
     resp = await client.post(
         "/api/v1/gmail/messages/msg-1/draft",
@@ -331,8 +333,9 @@ async def test_gmail_draft_alias_not_configured(client, monkeypatch):
 
 async def test_gmail_draft_alias_pipeline(client, monkeypatch):
     from app.core.config import settings
+    from pydantic import SecretStr
 
-    monkeypatch.setattr(settings, "anthropic_api_key", "test-key")
+    monkeypatch.setattr(settings, "anthropic_api_key", SecretStr("test-key"))
 
     async def fake_get_message(self, user, message_id):
         return {

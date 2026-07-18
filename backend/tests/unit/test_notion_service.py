@@ -10,11 +10,12 @@ from app.services.notion_service import (
     NotionNotConfiguredError,
     NotionService,
 )
+from pydantic import SecretStr
 
 
 @pytest.fixture
 def notion_configured(monkeypatch):
-    monkeypatch.setattr(settings, "notion_api_key", "secret_test_token")
+    monkeypatch.setattr(settings, "notion_api_key", SecretStr("secret_test_token"))
 
 
 def _service(handler) -> NotionService:

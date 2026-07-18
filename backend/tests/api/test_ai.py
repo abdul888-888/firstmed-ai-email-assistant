@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from app.core.config import settings
+from pydantic import SecretStr
 from app.models.document import DocumentSource
 from app.repositories.document import DocumentRepository
 
@@ -13,7 +14,7 @@ DRAFT = "/api/v1/ai/draft"
 
 @pytest.fixture
 def ai_configured(monkeypatch):
-    monkeypatch.setattr(settings, "anthropic_api_key", "test-key")
+    monkeypatch.setattr(settings, "anthropic_api_key", SecretStr("test-key"))
 
 
 async def _auth_token(client, email: str = "ai@firstmed.com") -> str:
@@ -47,7 +48,7 @@ async def test_triage_requires_auth(client):
 
 
 async def test_triage_not_configured(client, monkeypatch):
-    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    monkeypatch.setattr(settings, "anthropic_api_key", SecretStr(""))
     token = await _auth_token(client)
     resp = await client.post(
         TRIAGE,

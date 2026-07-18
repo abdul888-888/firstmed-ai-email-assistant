@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import pytest
 from app.core.config import settings
+from pydantic import SecretStr
 
 
 @pytest.fixture
 def ai_configured(monkeypatch):
-    monkeypatch.setattr(settings, "anthropic_api_key", "test-key")
+    monkeypatch.setattr(settings, "anthropic_api_key", SecretStr("test-key"))
 
 
 async def _auth_token(client, email: str) -> str:

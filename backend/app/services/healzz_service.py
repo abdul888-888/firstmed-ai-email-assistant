@@ -38,7 +38,7 @@ class HealzzService:
 
     def _headers(self) -> dict[str, str]:
         return {
-            "Authorization": f"Bearer {settings.healzz_api_key}",
+            "Authorization": f"Bearer {settings.healzz_api_key.get_secret_value()}",
             "Content-Type": "application/json",
         }
 

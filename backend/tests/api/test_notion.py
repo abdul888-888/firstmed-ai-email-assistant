@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.core.config import settings
+from pydantic import SecretStr
 
 
 async def _auth_token(client, email: str = "n@firstmed.com") -> str:
@@ -48,7 +49,7 @@ async def test_notion_connection_not_configured(client):
 
 
 async def test_notion_search_configured(client, monkeypatch):
-    monkeypatch.setattr(settings, "notion_api_key", "secret_test_token")
+    monkeypatch.setattr(settings, "notion_api_key", SecretStr("secret_test_token"))
     token = await _auth_token(client)
 
     # Patch the service call so no real network is used.

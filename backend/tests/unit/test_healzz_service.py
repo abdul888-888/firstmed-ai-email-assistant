@@ -10,6 +10,7 @@ from app.services.healzz_service import (
     HealzzNotConfiguredError,
     HealzzService,
 )
+from pydantic import SecretStr
 
 
 async def test_not_configured_by_default():
@@ -21,14 +22,14 @@ async def test_not_configured_by_default():
 
 async def test_request_raises_when_not_configured(monkeypatch):
     monkeypatch.setattr(settings, "healzz_api_base_url", "")
-    monkeypatch.setattr(settings, "healzz_api_key", "")
+    monkeypatch.setattr(settings, "healzz_api_key", SecretStr(""))
     with pytest.raises(HealzzNotConfiguredError):
         await HealzzService().ping()
 
 
 async def test_ping_calls_health_when_configured(monkeypatch):
     monkeypatch.setattr(settings, "healzz_api_base_url", "https://healzz.example/api/")
-    monkeypatch.setattr(settings, "healzz_api_key", "secret-key")
+    monkeypatch.setattr(settings, "healzz_api_key", SecretStr("secret-key"))
 
     def handler(request: httpx.Request) -> httpx.Response:
         # Trailing slash trimmed; bearer auth attached.
@@ -44,7 +45,7 @@ async def test_ping_calls_health_when_configured(monkeypatch):
 
 async def test_request_raises_on_error_status(monkeypatch):
     monkeypatch.setattr(settings, "healzz_api_base_url", "https://healzz.example")
-    monkeypatch.setattr(settings, "healzz_api_key", "k")
+    monkeypatch.setattr(settings, "healzz_api_key", SecretStr("k"))
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(503, text="unavailable")
@@ -57,5 +58,5 @@ async def test_request_raises_on_error_status(monkeypatch):
 
 async def test_configured_status(monkeypatch):
     monkeypatch.setattr(settings, "healzz_api_base_url", "https://healzz.example")
-    monkeypatch.setattr(settings, "healzz_api_key", "k")
+    monkeypatch.setattr(settings, "healzz_api_key", SecretStr("k"))
     assert await HealzzService().get_status() == {"configured": True, "base_url_set": True}

@@ -21,6 +21,7 @@ pgvector==0.5.0          # Vector column type + pgvector extension bindings
 bcrypt==4.2.1
 PyJWT==2.10.1
 cryptography==44.0.0     # Fernet encryption for stored OAuth tokens
+slowapi==0.1.10          # Rate limiting for public-facing endpoints (Phase 13, local hardening)
 
 # --- Cache / broker / jobs ---
 redis==5.2.1

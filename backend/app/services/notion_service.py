@@ -66,7 +66,7 @@ class NotionService:
 
     def _headers(self) -> dict[str, str]:
         return {
-            "Authorization": f"Bearer {settings.notion_api_key}",
+            "Authorization": f"Bearer {settings.notion_api_key.get_secret_value()}",
             "Notion-Version": settings.notion_version,
             "Content-Type": "application/json",
         }

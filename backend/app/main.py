@@ -10,11 +10,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from app import __version__
 from app.api.router import api_router
 from app.core.config import settings
 from app.core.logging import configure_logging, get_logger
+from app.core.rate_limit import limiter
 from app.middleware.request_id import RequestIDMiddleware
 
 logger = get_logger(__name__)
@@ -58,6 +62,11 @@ def create_app() -> FastAPI:
 
     # Request correlation
     app.add_middleware(RequestIDMiddleware)
+
+    # Rate limiting (Phase 13, local hardening) — see app.core.rate_limit.
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_middleware(SlowAPIMiddleware)
 
     # Routes
     app.include_router(api_router, prefix=settings.api_v1_prefix)
