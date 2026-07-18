@@ -11,10 +11,14 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import computed_field, field_validator
+from pydantic import computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["development", "staging", "production", "test"]
+
+# Dev-only placeholder values that must never reach a production deployment.
+_INSECURE_SECRET_KEYS = frozenset({"", "change-me-in-production", "changeme", "secret"})
+_INSECURE_DB_PASSWORDS = frozenset({"", "firstmed", "changeme", "password", "postgres"})
 
 
 class Settings(BaseSettings):
@@ -179,6 +183,28 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.environment == "production"
+
+    @model_validator(mode="after")
+    def _validate_production_secrets(self) -> Settings:
+        """Fail fast on insecure/placeholder secrets when running in production."""
+        if self.environment != "production":
+            return self
+
+        problems: list[str] = []
+        if self.secret_key.strip().lower() in _INSECURE_SECRET_KEYS:
+            problems.append("SECRET_KEY must be set to a strong, unique value")
+        if not self.token_encryption_key:
+            problems.append(
+                "TOKEN_ENCRYPTION_KEY must be set explicitly (no derived dev fallback)"
+            )
+        if self.postgres_password.strip().lower() in _INSECURE_DB_PASSWORDS:
+            problems.append("POSTGRES_PASSWORD must not use a development default")
+
+        if problems:
+            raise ValueError(
+                "Insecure configuration for environment=production: " + "; ".join(problems)
+            )
+        return self
 
 
 @lru_cache

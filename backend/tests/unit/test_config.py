@@ -7,7 +7,9 @@ default/assembly logic and are not perturbed by a developer's local ``.env``
 
 from __future__ import annotations
 
+import pytest
 from app.core.config import Settings
+from pydantic import ValidationError
 
 
 def test_cors_origins_parsed_from_comma_string():
@@ -38,5 +40,45 @@ def test_redis_uri_assembled():
 
 
 def test_is_production_flag():
-    assert Settings(_env_file=None, environment="production").is_production is True
+    assert (
+        Settings(
+            _env_file=None,
+            environment="production",
+            secret_key="a-strong-unique-production-secret",
+            token_encryption_key="dGVzdC1mZXJuZXQta2V5LXBsYWNlaG9sZGVyLTMyYg==",
+            postgres_password="a-strong-unique-db-password",
+        ).is_production
+        is True
+    )
     assert Settings(_env_file=None, environment="development").is_production is False
+
+
+def test_production_rejects_insecure_secret_key():
+    with pytest.raises(ValidationError, match="SECRET_KEY"):
+        Settings(
+            _env_file=None,
+            environment="production",
+            secret_key="change-me-in-production",
+            token_encryption_key="dGVzdC1mZXJuZXQta2V5LXBsYWNlaG9sZGVyLTMyYg==",
+            postgres_password="a-strong-unique-db-password",
+        )
+
+
+def test_production_rejects_missing_token_encryption_key():
+    with pytest.raises(ValidationError, match="TOKEN_ENCRYPTION_KEY"):
+        Settings(
+            _env_file=None,
+            environment="production",
+            secret_key="a-strong-unique-production-secret",
+            postgres_password="a-strong-unique-db-password",
+        )
+
+
+def test_production_rejects_default_db_password():
+    with pytest.raises(ValidationError, match="POSTGRES_PASSWORD"):
+        Settings(
+            _env_file=None,
+            environment="production",
+            secret_key="a-strong-unique-production-secret",
+            token_encryption_key="dGVzdC1mZXJuZXQta2V5LXBsYWNlaG9sZGVyLTMyYg==",
+        )
