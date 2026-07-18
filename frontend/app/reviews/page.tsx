@@ -181,9 +181,14 @@ export default function ReviewsPage() {
               <p className="text-xs text-slate-500">Review Dashboard</p>
             </div>
           </div>
-          <Link href="/" className="text-sm text-slate-500 transition-colors hover:text-slate-900">
-            Home
-          </Link>
+          <nav className="flex items-center gap-4 text-sm text-slate-500">
+            <Link href="/analytics" className="transition-colors hover:text-slate-900">
+              Analytics
+            </Link>
+            <Link href="/" className="transition-colors hover:text-slate-900">
+              Home
+            </Link>
+          </nav>
         </div>
       </header>
 
