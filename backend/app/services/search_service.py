@@ -122,12 +122,24 @@ class SearchService:
         self, query: str, sources: list[str] | None
     ) -> list[ScoredDocument]:
         """Cosine-ranked documents for the query, or [] if unavailable."""
+        qvec = await self.embeddings.embed_query(query)
+        if qvec is None:
+            return []
+
+        if self.repo.is_postgres:
+            # Native ANN search: the DB does the distance ranking (`<=>` operator).
+            rows = await self.repo.semantic_search(qvec, sources=sources, limit=_SEMANTIC_POOL)
+            scored = [
+                ScoredDocument(document=doc, score=1.0 - distance) for doc, distance in rows
+            ]
+            scored = [s for s in scored if s.score > 0]
+            scored.sort(key=lambda s: s.score, reverse=True)
+            return scored
+
+        # SQLite (tests): no vector extension, rank in Python.
         pool = await self.repo.fetch_candidates([], sources=sources, limit=_SEMANTIC_POOL)
         embeddable = [d for d in pool if d.embedding]
         if not embeddable:
-            return []
-        qvec = await self.embeddings.embed_query(query)
-        if qvec is None:
             return []
         scored = [
             ScoredDocument(document=d, score=cosine_similarity(qvec, d.embedding))

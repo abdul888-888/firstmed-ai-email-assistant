@@ -5,7 +5,8 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from pgvector.sqlalchemy import Vector as PGVector
+from sqlalchemy import cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document import Document
@@ -18,6 +19,11 @@ class DocumentRepository:
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+
+    @property
+    def is_postgres(self) -> bool:
+        """True when the bound engine is PostgreSQL (native pgvector ANN search)."""
+        return self.session.bind is not None and self.session.bind.dialect.name == "postgresql"
 
     async def get(self, document_id: uuid.UUID) -> Document | None:
         return await self.session.get(Document, document_id)
@@ -110,3 +116,19 @@ class DocumentRepository:
         stmt = stmt.limit(limit)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def semantic_search(
+        self, query_vector: list[float], *, sources: list[str] | None = None, limit: int = 200
+    ) -> list[tuple[Document, float]]:
+        """Native pgvector ANN search: nearest documents by cosine distance.
+
+        PostgreSQL only (see ``is_postgres``) — the ``<=>`` operator requires a
+        real ``vector`` column, which SQLite (used by the test suite) doesn't have.
+        """
+        distance = Document.embedding.op("<=>")(cast(query_vector, PGVector(len(query_vector))))
+        stmt = select(Document, distance).where(Document.embedding.isnot(None))
+        if sources:
+            stmt = stmt.where(Document.source.in_(sources))
+        stmt = stmt.order_by(distance).limit(limit)
+        result = await self.session.execute(stmt)
+        return [(doc, dist) for doc, dist in result.all()]
