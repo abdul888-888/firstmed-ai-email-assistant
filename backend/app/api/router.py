@@ -19,6 +19,7 @@ from app.api import (
     notion,
     reviews,
     search,
+    templates,
     workflows,
 )
 from app.api import health as health_module
@@ -39,5 +40,6 @@ api_router.include_router(healzz.router)
 api_router.include_router(drafts.router)
 api_router.include_router(workflows.router)
 api_router.include_router(reviews.router)
+api_router.include_router(templates.router)
 api_router.include_router(analytics.router)
 api_router.include_router(admin.router)

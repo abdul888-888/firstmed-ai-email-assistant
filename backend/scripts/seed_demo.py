@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.document import DocumentSource
 from app.repositories.document import DocumentRepository
+from app.repositories.template import TemplateRepository
 from app.services.embedding_service import EmbeddingService
 
 # Notion-style knowledge base + one prior Gmail thread (so both source types cite).
@@ -115,6 +116,60 @@ DOCS: list[dict] = [
 ]
 
 
+# Canned-response templates staff can insert into a draft (Phase 7).
+TEMPLATES: list[dict] = [
+    {
+        "key": "office_hours",
+        "title": "Clinic office hours",
+        "category": "front_office",
+        "body": (
+            "Our clinic hours are Monday–Friday, 8:00 AM to 8:00 PM, and Saturday, "
+            "9:00 AM to 2:00 PM. We are closed on Sundays and major holidays."
+        ),
+    },
+    {
+        "key": "parking_validation",
+        "title": "Parking & validation",
+        "category": "front_office",
+        "body": (
+            "Parking is available in the attached garage. Please bring your parking "
+            "ticket to the front desk during your visit and our staff will validate it. "
+            "Street parking is not validated."
+        ),
+    },
+    {
+        "key": "booking_link",
+        "title": "Online booking link",
+        "category": "scheduling",
+        "body": (
+            "You can schedule, reschedule, or cancel an appointment any time through "
+            "our patient portal: https://portal.firstmed.example/booking. If you'd "
+            "prefer, reply here with a few dates that work and we'll book it for you."
+        ),
+    },
+    {
+        "key": "refill_ack",
+        "title": "Refill request acknowledgement",
+        "category": "clinical",
+        "body": (
+            "Thank you for your refill request. Our Nurse Station will review it and "
+            "send the prescription to your pharmacy within 48 hours. To help us process "
+            "it, please confirm the medication name, dosage, and preferred pharmacy."
+        ),
+    },
+    {
+        "key": "billing_hours",
+        "title": "Billing office hours",
+        "category": "billing",
+        "body": (
+            "Our billing office is available Monday–Friday, 9:00 AM to 5:00 PM. You can "
+            "pay by phone during those hours or any time through the patient portal. "
+            "For insurance questions, our front office team is happy to help."
+        ),
+    },
+]
+
+
 async def main() -> None:
     async with AsyncSessionLocal() as session:
         repo = DocumentRepository(session)
@@ -129,6 +184,12 @@ async def main() -> None:
             )
         counts = await repo.counts_by_source()
 
+        templates = TemplateRepository(session)
+        for t in TEMPLATES:
+            await templates.upsert(
+                key=t["key"], title=t["title"], category=t["category"], body=t["body"]
+            )
+
         # Phase 9: embed the seeded SOPs (no-op if the embedder is unavailable).
         embeddings = EmbeddingService(session)
         embedded = await embeddings.backfill()
@@ -136,6 +197,7 @@ async def main() -> None:
     print(f"DB: {settings.sqlalchemy_database_uri}")
     print(f"Seeded {len(DOCS)} documents. Index counts by source: {counts}")
     print(f"Embedded {embedded} documents ({'available' if embedded else 'lexical-only'}).")
+    print(f"Seeded {len(TEMPLATES)} canned-response templates.")
 
 
 if __name__ == "__main__":

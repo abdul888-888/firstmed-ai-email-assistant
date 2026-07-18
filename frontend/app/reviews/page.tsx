@@ -43,6 +43,14 @@ type Review = {
   gmail_draft_id: string | null;
 };
 
+type Template = {
+  id: string;
+  key: string;
+  title: string;
+  category: string;
+  body: string;
+};
+
 const base = `${API_BASE_URL}/api/v1/reviews`;
 
 async function api(path: string, init?: RequestInit) {
@@ -58,6 +66,7 @@ async function api(path: string, init?: RequestInit) {
 export default function ReviewsPage() {
   const [pending, setPending] = useState<Review[]>([]);
   const [approved, setApproved] = useState<Review[]>([]);
+  const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [signedIn, setSignedIn] = useState(true);
@@ -83,6 +92,9 @@ export default function ReviewsPage() {
       ]);
       setPending(p.reviews ?? []);
       setApproved(a.reviews ?? []);
+      // Canned-response templates for the draft editor (best-effort).
+      const t = await fetch(`${API_BASE_URL}/api/v1/templates`, { headers: { ...authHeader() } });
+      if (t.ok) setTemplates((await t.json()).templates ?? []);
     } catch (e) {
       if (e instanceof Error && e.message.includes("401")) setSignedIn(false);
       else setError(e instanceof Error ? e.message : "Failed to load");
@@ -192,6 +204,7 @@ export default function ReviewsPage() {
                   <PendingCard
                     key={r.id}
                     review={r}
+                    templates={templates}
                     onSave={(body) => saveEdit(r.id, body)}
                     onApprove={(body) => approve(r.id, body)}
                     onReject={() => reject(r.id)}
@@ -279,11 +292,13 @@ function CardHead({ review }: { review: Review }) {
 
 function PendingCard({
   review,
+  templates,
   onSave,
   onApprove,
   onReject,
 }: {
   review: Review;
+  templates: Template[];
   onSave: (body: string) => Promise<void>;
   onApprove: (body: string) => Promise<void>;
   onReject: () => Promise<void>;
@@ -291,6 +306,12 @@ function PendingCard({
   const [body, setBody] = useState(review.draft_body);
   const [busy, setBusy] = useState<null | "save" | "approve" | "reject">(null);
   const dirty = body !== review.draft_body;
+
+  function insertTemplate(id: string) {
+    const tpl = templates.find((t) => t.id === id);
+    if (!tpl) return;
+    setBody((b) => (b.trimEnd() ? `${b.trimEnd()}\n\n${tpl.body}` : tpl.body));
+  }
 
   const run = (kind: "save" | "approve" | "reject", fn: () => Promise<void>) => async () => {
     setBusy(kind);
@@ -307,9 +328,29 @@ function PendingCard({
       <CardContent className="space-y-4">
         <MetaRow review={review} />
         <div>
-          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
-            Draft reply {dirty && <span className="text-amber-600">· edited (unsaved)</span>}
-          </p>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+              Draft reply {dirty && <span className="text-amber-600">· edited (unsaved)</span>}
+            </p>
+            {templates.length > 0 && (
+              <select
+                value=""
+                onChange={(e) => {
+                  insertTemplate(e.target.value);
+                  e.currentTarget.value = "";
+                }}
+                className="max-w-[220px] rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 shadow-sm focus:border-blue-500 focus:outline-none"
+                aria-label="Insert a canned-response template"
+              >
+                <option value="">+ Insert template…</option>
+                {templates.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.title}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
           <Textarea
             value={body}
             onChange={(e) => setBody(e.target.value)}

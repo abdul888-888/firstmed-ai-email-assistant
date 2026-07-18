@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     notion_root_page_id: str = ""
     notion_version: str = "2022-06-28"
 
+    # --- Healzz (Phase 10) ---
+    healzz_api_base_url: str = ""
+    healzz_api_key: str = ""
+
     # --- AI (Phase 5) ---
     anthropic_api_key: str = ""
     # Active, cost-friendly default. Haiku 4.5 supports structured outputs (triage)
@@ -124,6 +128,12 @@ class Settings(BaseSettings):
     def notion_configured(self) -> bool:
         """True when a Notion integration token is set."""
         return bool(self.notion_api_key)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def healzz_configured(self) -> bool:
+        """True when both the Healzz base URL and API key are set."""
+        return bool(self.healzz_api_base_url and self.healzz_api_key)
 
     @computed_field  # type: ignore[prop-decorator]
     @property

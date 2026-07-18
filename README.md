@@ -24,10 +24,10 @@ Each phase compiles and runs before the next begins.
 | 4 | Retrieval / Search (Gmail + Notion) | ✅ Done |
 | 5 | AI Triage & Draft Generation | ✅ Done |
 | 6 | Workflow Intelligence Engine | ✅ Done |
-| 7 | Template Management | ⏳ Planned |
+| 7 | Template Management | ✅ Done (canned responses in dashboard) |
 | 8 | Human Review Dashboard | ✅ Done (edit / approve / reject / send) |
 | 9 | Semantic Retrieval (embeddings) | ✅ Done (fastembed local; hybrid RRF) |
-| 10 | Healzz Integration | ⏳ Planned |
+| 10 | Healzz Integration | 🚧 Foundation (config + service wiring) |
 | 11 | Internal Collaboration | ⏳ Planned |
 | 12 | Analytics & Reporting | ⏳ Planned |
 | 13 | Production Readiness | ⏳ Planned |

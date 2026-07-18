@@ -29,7 +29,12 @@ async def test_root_redirects_to_docs(client):
 
 
 async def test_module_placeholder_status(client):
-    # Healzz is still a placeholder (Phase 10); gmail/notion are implemented.
+    # Healzz has a Phase 10 foundation (config + service); not configured by default.
     resp = await client.get("/api/v1/healzz/status")
     assert resp.status_code == 200
-    assert resp.json() == {"module": "healzz", "implemented": False, "phase": 10}
+    assert resp.json() == {
+        "module": "healzz",
+        "phase": 10,
+        "foundation": True,
+        "configured": False,
+    }
