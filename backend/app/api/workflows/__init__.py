@@ -35,6 +35,34 @@ async def status_() -> dict:
 
 
 @router.post(
+    "/pull",
+    summary="Pull recent inbox mail and triage each new message → pending reviews",
+)
+async def pull_gmail(
+    max_results: int = 12,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """One-click ingest: list recent Primary-inbox messages, skip any already in
+    the review queue, and run the triage → draft pipeline on the rest. Returns a
+    summary of how many reviews were created/skipped/failed."""
+    if not settings.ai_configured:
+        raise _NOT_CONFIGURED
+    try:
+        return await WorkflowService(session).pull_gmail(
+            current_user, max_results=max_results
+        )
+    except GmailNotConnectedError as exc:
+        raise _NOT_CONNECTED from exc
+    except AINotConfiguredError as exc:
+        raise _NOT_CONFIGURED from exc
+    except GmailApiError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Gmail request failed: {exc}"
+        ) from exc
+
+
+@router.post(
     "/gmail/{message_id}",
     response_model=DraftReviewRead,
     summary="Run the workflow pipeline on a Gmail message → pending review",

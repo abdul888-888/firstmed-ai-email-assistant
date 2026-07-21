@@ -15,6 +15,7 @@ class Intent(str, enum.Enum):
     test_results = "test_results"
     referral = "referral"
     complaint = "complaint"
+    irrelevant = "irrelevant"
     other = "other"
 
 

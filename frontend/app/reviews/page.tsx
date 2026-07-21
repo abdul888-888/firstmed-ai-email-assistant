@@ -1,20 +1,28 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
 import {
   AlertTriangle,
   CheckCircle2,
-  ClipboardCheck,
+  Clock,
+  FileText,
   Loader2,
   Mail,
   MessageSquare,
   Send,
   ShieldAlert,
   ShieldCheck,
-  Stethoscope,
-  UserRound,
+  User,
   XCircle,
+  RefreshCw,
+  Stethoscope,
+  Filter,
+  ChevronRight,
+  CheckCheck,
+  MoreHorizontal,
+  Eye,
+  Edit3,
+  Trash2,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -22,14 +30,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  addReviewNote,
-  assignReview,
-  listReviewNotes,
-  listTeamMembers,
-  type ReviewNote,
-  type TeamMember,
-} from "@/lib/admin";
+import { DashboardLayout } from "@/components/dashboard-layout";
 import { API_BASE_URL } from "@/lib/api";
 import { authHeader, getToken, startGoogleSignIn } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -43,680 +44,530 @@ type Review = {
   intent: string;
   urgency: string;
   department: string;
-  classification: "ADMIN_DIRECT_REPLY" | "NEEDS_PHYSICIAN_REVIEW";
+  classification: "ADMIN_DIRECT_REPLY" | "NEEDS_PHYSICIAN_REVIEW" | "IRRELEVANT";
   confidence: number;
   reason: string;
+  summary: string;
   draft_body: string;
   citations: Citation[];
-  status: string;
+  status: "pending" | "awaiting_specialist_input" | "specialist_input_received" | "approved" | "rejected" | "sent" | "irrelevant";
   gmail_draft_id: string | null;
   assigned_to: string | null;
-};
-
-type Template = {
-  id: string;
-  key: string;
-  title: string;
-  category: string;
-  body: string;
+  specialist_input: string | null;
+  specialist_id: string | null;
+  specialist_input_at: string | null;
+  created_at: string;
 };
 
 const base = `${API_BASE_URL}/api/v1/reviews`;
+
+class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
 
 async function api(path: string, init?: RequestInit) {
   const res = await fetch(`${base}${path}`, {
     ...init,
     headers: { "Content-Type": "application/json", ...authHeader(), ...(init?.headers ?? {}) },
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.detail ?? `Request failed (${res.status})`);
-  return data;
+  if (res.status === 401) {
+    throw new ApiError("Unauthorized", 401);
+  }
+  const body = await res.json();
+  if (!res.ok) {
+    throw new ApiError(body.detail ?? `HTTP ${res.status}`, res.status);
+  }
+  return body;
 }
 
-export default function ReviewsPage() {
-  const [pending, setPending] = useState<Review[]>([]);
-  const [approved, setApproved] = useState<Review[]>([]);
-  const [templates, setTemplates] = useState<Template[]>([]);
-  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [signedIn, setSignedIn] = useState(true);
-  const [toast, setToast] = useState<string | null>(null);
+async function listReviews(status?: string) {
+  const query = status ? `?status=${status}` : "";
+  return api(`${query}`);
+}
 
-  const flash = (m: string) => {
-    setToast(m);
-    setTimeout(() => setToast(null), 5000);
-  };
+async function approveReview(review: Review) {
+  return api(`/${review.id}/approve`, { method: "POST" });
+}
 
-  const load = useCallback(async () => {
-    if (!getToken()) {
-      setSignedIn(false);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const [p, a] = await Promise.all([
-        api("/pending"),
-        api("?status=approved"),
-      ]);
-      setPending(p.reviews ?? []);
-      setApproved(a.reviews ?? []);
-      // Canned-response templates for the draft editor (best-effort).
-      const t = await fetch(`${API_BASE_URL}/api/v1/templates`, { headers: { ...authHeader() } });
-      if (t.ok) setTemplates((await t.json()).templates ?? []);
-      // Active staff for the assignee picker (best-effort).
-      try {
-        setTeamMembers(await listTeamMembers());
-      } catch {
-        setTeamMembers([]);
-      }
-    } catch (e) {
-      if (e instanceof Error && e.message.includes("401")) setSignedIn(false);
-      else setError(e instanceof Error ? e.message : "Failed to load");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+async function rejectReview(review: Review, reason: string) {
+  return api(`/${review.id}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+async function sendReview(review: Review) {
+  return api(`/${review.id}/send`, { method: "POST" });
+}
 
-  async function saveEdit(id: string, body: string) {
-    const updated = (await api(`/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ draft_body: body }),
-    })) as Review;
-    setPending((rs) => rs.map((r) => (r.id === id ? { ...r, draft_body: updated.draft_body } : r)));
-    flash("Draft saved.");
+async function editDraft(review: Review, draft_body: string) {
+  return api(`/${review.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ draft_body }),
+  });
+}
+
+async function submitSpecialistInput(review: Review, specialist_input: string, should_revise: boolean) {
+  return api(`/${review.id}/specialist-input`, {
+    method: "POST",
+    body: JSON.stringify({ specialist_input, should_revise_draft: should_revise }),
+  });
+}
+
+const statusConfig = {
+  pending: { color: "bg-blue-100", text: "text-blue-800", icon: Clock, label: "Pending" },
+  awaiting_specialist_input: { color: "bg-yellow-100", text: "text-yellow-800", icon: Stethoscope, label: "Awaiting Specialist" },
+  specialist_input_received: { color: "bg-purple-100", text: "text-purple-800", icon: MessageSquare, label: "Specialist Input Received" },
+  approved: { color: "bg-green-100", text: "text-green-800", icon: CheckCircle2, label: "Approved" },
+  rejected: { color: "bg-red-100", text: "text-red-800", icon: XCircle, label: "Rejected" },
+  sent: { color: "bg-gray-100", text: "text-gray-800", icon: Send, label: "Sent" },
+  irrelevant: { color: "bg-slate-100", text: "text-slate-800", icon: FileText, label: "Irrelevant" },
+};
+
+const classificationConfig = {
+  ADMIN_DIRECT_REPLY: { icon: ShieldCheck, label: "Admin Reply", color: "text-blue-600" },
+  NEEDS_PHYSICIAN_REVIEW: { icon: ShieldAlert, label: "Needs Physician Review", color: "text-orange-600" },
+  IRRELEVANT: { icon: AlertTriangle, label: "Irrelevant", color: "text-gray-600" },
+};
+
+const departmentConfig = {
+  front_office: { label: "Front Office", color: "bg-blue-50" },
+  nurse: { label: "Nurse", color: "bg-green-50" },
+  specialist: { label: "Specialist", color: "bg-purple-50" },
+};
+
+function ReviewCard({ review, onAction }: { review: Review; onAction: (type: string, review: Review, data?: any) => void }) {
+  const status = statusConfig[review.status as keyof typeof statusConfig];
+  const classification = classificationConfig[review.classification as keyof typeof classificationConfig];
+  const department = departmentConfig[review.department as keyof typeof departmentConfig];
+  const StatusIcon = status?.icon || Clock;
+  const ClassIcon = classification?.icon || FileText;
+
+  return (
+    <Card className="hover:shadow-lg transition-shadow">
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between">
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-2">
+              <Badge className={cn(status?.color, status?.text)}>
+                <StatusIcon className="w-3 h-3 mr-1" />
+                {status?.label}
+              </Badge>
+              <Badge variant="outline" className={cn(department?.color)}>
+                {department?.label}
+              </Badge>
+            </div>
+            <p className="font-semibold text-lg text-gray-900 line-clamp-2">{review.subject || "(no subject)"}</p>
+            <p className="text-sm text-gray-600 mt-1">From: {review.sender}</p>
+          </div>
+        </div>
+      </CardHeader>
+
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-2 gap-3 text-sm">
+          <div>
+            <span className="text-gray-500">Intent:</span>
+            <p className="font-medium">{review.intent}</p>
+          </div>
+          <div>
+            <span className="text-gray-500">Urgency:</span>
+            <p className="font-medium">{review.urgency}</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <ClassIcon className={cn("w-4 h-4", classification?.color)} />
+          <span className="text-sm">{classification?.label}</span>
+          <span className="text-sm text-gray-500">• {(review.confidence * 100).toFixed(0)}% confident</span>
+        </div>
+
+        <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded">{review.summary}</p>
+
+        {review.status !== "irrelevant" && (
+          <>
+            {review.draft_body && (
+              <div className="border-t pt-3">
+                <p className="text-sm font-medium text-gray-900 mb-2">Draft Reply:</p>
+                <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded line-clamp-3">{review.draft_body}</p>
+              </div>
+            )}
+
+            {review.specialist_input && (
+              <div className="border-t pt-3 bg-purple-50 p-3 rounded">
+                <p className="text-sm font-medium text-purple-900 mb-2">Specialist Input:</p>
+                <p className="text-sm text-purple-800">{review.specialist_input}</p>
+              </div>
+            )}
+          </>
+        )}
+
+        {review.citations.length > 0 && (
+          <div className="border-t pt-3">
+            <p className="text-xs font-medium text-gray-600 mb-2">Sources:</p>
+            <div className="space-y-1">
+              {review.citations.map((c) => (
+                <a
+                  key={c.document_id}
+                  href={c.url || "#"}
+                  className="text-xs text-blue-600 hover:underline block"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {c.source}: {c.title}
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="border-t pt-4">
+          <ActionButtons review={review} onAction={onAction} />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ActionButtons({ review, onAction }: { review: Review; onAction: (type: string, review: Review, data?: any) => void }) {
+  if (review.status === "irrelevant") {
+    return (
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" className="w-full" disabled>
+          This email was marked as irrelevant
+        </Button>
+      </div>
+    );
   }
 
-  async function approve(id: string, body: string) {
-    const current = pending.find((r) => r.id === id);
-    if (current && body !== current.draft_body) {
-      await api(`/${id}`, { method: "PATCH", body: JSON.stringify({ draft_body: body }) });
-    }
-    const updated = (await api(`/${id}/approve`, { method: "POST" })) as Review;
-    setPending((rs) => rs.filter((r) => r.id !== id));
-    setApproved((rs) => [updated, ...rs]);
-    flash("Approved — draft is in Gmail Drafts. Send it when ready.");
+  if (review.status === "awaiting_specialist_input") {
+    return (
+      <div className="space-y-2">
+        <p className="text-xs text-gray-600 font-medium">Awaiting specialist input...</p>
+        <Button
+          size="sm"
+          className="w-full bg-purple-600 hover:bg-purple-700"
+          onClick={() => onAction("specialist_input", review)}
+        >
+          <MessageSquare className="w-4 h-4 mr-2" />
+          Provide Input
+        </Button>
+      </div>
+    );
   }
 
-  async function reject(id: string) {
-    const reason = window.prompt("Reason for rejecting this draft?") ?? "";
-    if (reason === null) return;
-    await api(`/${id}/reject`, { method: "POST", body: JSON.stringify({ reason }) });
-    setPending((rs) => rs.filter((r) => r.id !== id));
-    flash("Rejected.");
+  if (review.status === "specialist_input_received") {
+    return (
+      <div className="space-y-2">
+        <Button size="sm" variant="outline" className="w-full" onClick={() => onAction("edit", review)}>
+          <Edit3 className="w-4 h-4 mr-2" />
+          Review & Edit Draft
+        </Button>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            className="flex-1"
+            onClick={() => onAction("approve", review)}
+          >
+            <CheckCircle2 className="w-4 h-4 mr-1" />
+            Approve
+          </Button>
+          <Button size="sm" variant="destructive" className="flex-1" onClick={() => onAction("reject", review)}>
+            <XCircle className="w-4 h-4 mr-1" />
+            Reject
+          </Button>
+        </div>
+      </div>
+    );
   }
 
-  async function send(id: string) {
-    if (!window.confirm("Send this reply to the patient now? This delivers a real email.")) return;
-    await api(`/${id}/send`, { method: "POST" });
-    setApproved((rs) => rs.filter((r) => r.id !== id));
-    flash("Sent ✓ The reply was delivered.");
+  if (review.status === "approved" && !review.gmail_draft_id) {
+    return (
+      <Button size="sm" className="w-full" onClick={() => onAction("send", review)}>
+        <Send className="w-4 h-4 mr-2" />
+        Send Email
+      </Button>
+    );
   }
 
-  async function assign(id: string, assignedTo: string | null) {
-    const updated = (await assignReview(id, assignedTo)) as Review;
-    const patch = (rs: Review[]) =>
-      rs.map((r) => (r.id === id ? { ...r, assigned_to: updated.assigned_to } : r));
-    setPending(patch);
-    setApproved(patch);
-    flash(assignedTo ? "Review assigned." : "Review unassigned.");
+  if (review.status === "approved" || review.status === "pending") {
+    return (
+      <div className="flex gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          className="flex-1"
+          onClick={() => onAction("edit", review)}
+        >
+          <Edit3 className="w-4 h-4 mr-1" />
+          Edit
+        </Button>
+        <Button
+          size="sm"
+          className="flex-1"
+          onClick={() => onAction("approve", review)}
+        >
+          <CheckCircle2 className="w-4 h-4 mr-1" />
+          Approve
+        </Button>
+        <Button size="sm" variant="destructive" className="flex-1" onClick={() => onAction("reject", review)}>
+          <XCircle className="w-4 h-4 mr-1" />
+          Reject
+        </Button>
+      </div>
+    );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white text-slate-900">
-      <header className="sticky top-0 z-10 border-b border-slate-200/70 bg-white/80 backdrop-blur">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-3.5">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-blue-600 to-blue-700 shadow-sm">
-              <Stethoscope className="h-5 w-5 text-white" />
-            </div>
-            <div className="leading-tight">
-              <p className="text-sm font-semibold">FirstMed</p>
-              <p className="text-xs text-slate-500">Review Dashboard</p>
-            </div>
-          </div>
-          <nav className="flex items-center gap-4 text-sm text-slate-500">
-            <Link href="/analytics" className="transition-colors hover:text-slate-900">
-              Analytics
-            </Link>
-            <Link href="/" className="transition-colors hover:text-slate-900">
-              Home
-            </Link>
-          </nav>
-        </div>
-      </header>
+    <div className="text-xs text-gray-500">
+      {review.status === "sent" && "Email sent ✓"}
+      {review.status === "rejected" && "Email rejected"}
+    </div>
+  );
+}
 
-      <main className="mx-auto max-w-5xl px-6 py-8">
-        <div className="mb-6 flex items-center justify-between">
+export default function ReviewsPage() {
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedStatus, setSelectedStatus] = useState<string | null>(null);
+  const [editingReview, setEditingReview] = useState<Review | null>(null);
+  const [editingDraft, setEditingDraft] = useState<string>("");
+  const [rejectReason, setRejectReason] = useState("");
+  const [specialistInput, setSpecialistInput] = useState("");
+  const [actionInProgress, setActionInProgress] = useState(false);
+
+  const loadReviews = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await listReviews(selectedStatus || undefined);
+      setReviews(Array.isArray(data) ? data : data.reviews || []);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.status === 401) {
+          await startGoogleSignIn();
+          return;
+        }
+        setError(err.message);
+      } else {
+        setError("Failed to load reviews");
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedStatus]);
+
+  useEffect(() => {
+    loadReviews();
+  }, [loadReviews]);
+
+  const handleAction = async (type: string, review: Review, data?: any) => {
+    setActionInProgress(true);
+    try {
+      let result;
+      switch (type) {
+        case "approve":
+          result = await approveReview(review);
+          break;
+        case "reject":
+          result = await rejectReview(review, rejectReason || "No reason provided");
+          setRejectReason("");
+          break;
+        case "send":
+          result = await sendReview(review);
+          break;
+        case "edit":
+          setEditingReview(review);
+          setEditingDraft(review.draft_body);
+          return;
+        case "specialist_input":
+          setEditingReview(review);
+          setSpecialistInput("");
+          return;
+        case "save_draft":
+          result = await editDraft(review, editingDraft);
+          setEditingReview(null);
+          break;
+        case "submit_specialist_input":
+          result = await submitSpecialistInput(review, specialistInput, true);
+          setEditingReview(null);
+          setSpecialistInput("");
+          break;
+        default:
+          return;
+      }
+      await loadReviews();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Action failed");
+    } finally {
+      setActionInProgress(false);
+    }
+  };
+
+  const statuses = Object.entries(statusConfig).map(([key, val]) => ({
+    key,
+    label: val.label,
+  }));
+
+  const filteredReviews = selectedStatus
+    ? reviews.filter((r) => r.status === selectedStatus)
+    : reviews;
+
+  return (
+    <DashboardLayout>
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">Review queue</h1>
-            <p className="mt-1.5 max-w-2xl text-slate-500">
-              Edit, approve, reject, and send AI-prepared drafts. Approving puts a draft in Gmail;
-              sending is a separate, explicit step.
-            </p>
+            <h1 className="text-3xl font-bold text-gray-900">Email Reviews</h1>
+            <p className="text-gray-600 mt-1">Manage and respond to patient emails</p>
           </div>
-          {signedIn && (
-            <Button variant="outline" onClick={() => void load()} disabled={loading}>
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Refresh"}
-            </Button>
-          )}
+          <Button onClick={loadReviews} disabled={loading} variant="outline">
+            <RefreshCw className={cn("w-4 h-4 mr-2", loading && "animate-spin")} />
+            Refresh
+          </Button>
         </div>
 
-        {toast && (
-          <div className="mb-4 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-            <CheckCircle2 className="h-4 w-4" />
-            {toast}
-          </div>
-        )}
+        {/* Status Filter */}
+        <div className="flex gap-2 flex-wrap">
+          <Button
+            variant={selectedStatus === null ? "default" : "outline"}
+            size="sm"
+            onClick={() => setSelectedStatus(null)}
+          >
+            <Filter className="w-4 h-4 mr-2" />
+            All ({reviews.length})
+          </Button>
+          {statuses.map((s) => {
+            const count = reviews.filter((r) => r.status === s.key).length;
+            return (
+              <Button
+                key={s.key}
+                variant={selectedStatus === s.key ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSelectedStatus(s.key)}
+              >
+                {s.label} ({count})
+              </Button>
+            );
+          })}
+        </div>
+
+        {/* Error Message */}
         {error && (
-          <div className="mb-4 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            <AlertTriangle className="h-4 w-4" />
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-800">
             {error}
           </div>
         )}
 
-        {!signedIn ? (
-          <SignInState onError={setError} />
-        ) : loading ? (
-          <LoadingState />
-        ) : (
-          <div className="space-y-8">
-            <Section title="Awaiting approval" count={pending.length}>
-              {pending.length === 0 ? (
-                <EmptyRow text="No drafts awaiting approval." />
-              ) : (
-                pending.map((r) => (
-                  <PendingCard
-                    key={r.id}
-                    review={r}
-                    templates={templates}
-                    teamMembers={teamMembers}
-                    onSave={(body) => saveEdit(r.id, body)}
-                    onApprove={(body) => approve(r.id, body)}
-                    onReject={() => reject(r.id)}
-                    onAssign={(assignedTo) => assign(r.id, assignedTo)}
-                  />
-                ))
-              )}
-            </Section>
-
-            <Section title="Approved — ready to send" count={approved.length}>
-              {approved.length === 0 ? (
-                <EmptyRow text="Nothing approved yet." />
-              ) : (
-                approved.map((r) => (
-                  <ApprovedCard
-                    key={r.id}
-                    review={r}
-                    teamMembers={teamMembers}
-                    onSend={() => send(r.id)}
-                    onAssign={(assignedTo) => assign(r.id, assignedTo)}
-                  />
-                ))
-              )}
-            </Section>
-          </div>
+        {/* Edit Modal */}
+        {editingReview && editingReview.status !== "awaiting_specialist_input" && (
+          <Card className="border-2 border-blue-500">
+            <CardHeader>
+              <CardTitle>Edit Draft Reply</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <label className="text-sm font-medium text-gray-700">Draft Body</label>
+                <Textarea
+                  value={editingDraft}
+                  onChange={(e) => setEditingDraft(e.target.value)}
+                  className="mt-2 font-mono text-sm"
+                  rows={8}
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  onClick={() => handleAction("save_draft", editingReview)}
+                  disabled={actionInProgress}
+                >
+                  <CheckCheck className="w-4 h-4 mr-2" />
+                  Save Draft
+                </Button>
+                <Button variant="outline" onClick={() => setEditingReview(null)}>
+                  Cancel
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         )}
-      </main>
-    </div>
-  );
-}
 
-/* ── Cards ─────────────────────────────────────────── */
+        {/* Specialist Input Modal */}
+        {editingReview && editingReview.status === "awaiting_specialist_input" && (
+          <Card className="border-2 border-purple-500">
+            <CardHeader>
+              <CardTitle>Provide Specialist Input</CardTitle>
+              <p className="text-sm text-gray-600 mt-2">
+                Email from {editingReview.sender} requires your clinical input.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <p className="font-medium mb-2">Original Email:</p>
+                <p className="text-sm bg-gray-50 p-3 rounded">{editingReview.subject}</p>
+              </div>
+              {editingReview.draft_body && (
+                <div>
+                  <p className="font-medium mb-2">Current Draft:</p>
+                  <p className="text-sm bg-gray-50 p-3 rounded">{editingReview.draft_body}</p>
+                </div>
+              )}
+              <div>
+                <label className="text-sm font-medium text-gray-700">Your Clinical Input</label>
+                <Textarea
+                  placeholder="Provide your specialist guidance, recommendations, or changes needed..."
+                  value={specialistInput}
+                  onChange={(e) => setSpecialistInput(e.target.value)}
+                  className="mt-2"
+                  rows={6}
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  onClick={() => handleAction("submit_specialist_input", editingReview)}
+                  disabled={actionInProgress || !specialistInput}
+                  className="bg-purple-600 hover:bg-purple-700"
+                >
+                  <Stethoscope className="w-4 h-4 mr-2" />
+                  Submit Input
+                </Button>
+                <Button variant="outline" onClick={() => setEditingReview(null)}>
+                  Cancel
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
-function ClassificationBadge({ review }: { review: Review }) {
-  const needsReview = review.classification === "NEEDS_PHYSICIAN_REVIEW";
-  return (
-    <Badge
-      className={cn(
-        "shrink-0",
-        needsReview
-          ? "border-amber-200 bg-amber-50 text-amber-700"
-          : "border-emerald-200 bg-emerald-50 text-emerald-700",
-      )}
-    >
-      {needsReview ? <ShieldAlert className="h-3.5 w-3.5" /> : <ShieldCheck className="h-3.5 w-3.5" />}
-      {needsReview ? "Needs physician review" : "Admin direct reply"}
-    </Badge>
-  );
-}
-
-function MetaRow({ review }: { review: Review }) {
-  const pct = Math.round((review.confidence ?? 0) * 100);
-  const confColor = pct >= 80 ? "bg-emerald-500" : pct >= 55 ? "bg-amber-500" : "bg-red-500";
-  return (
-    <>
-      <div className="flex flex-wrap gap-2">
-        <Badge className="border-blue-200 bg-blue-50 text-blue-700">
-          <UserRound className="h-3.5 w-3.5" />
-          {review.department}
-        </Badge>
-        <Badge>{review.intent}</Badge>
-        <Badge>{review.urgency} priority</Badge>
-      </div>
-      <div>
-        <div className="mb-1.5 flex items-center justify-between text-xs">
-          <span className="font-medium text-slate-500">Confidence</span>
-          <span className="font-semibold text-slate-900">{pct}%</span>
-        </div>
-        <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
-          <div className={cn("h-full rounded-full", confColor)} style={{ width: `${pct}%` }} />
-        </div>
-        <p className="mt-2 text-xs italic text-slate-500">{review.reason}</p>
-      </div>
-    </>
-  );
-}
-
-function CardHead({
-  review,
-  teamMembers,
-  onAssign,
-}: {
-  review: Review;
-  teamMembers: TeamMember[];
-  onAssign: (assignedTo: string | null) => Promise<void>;
-}) {
-  return (
-    <CardHeader className="flex-row items-start justify-between gap-4">
-      <div className="min-w-0">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Mail className="h-4 w-4 shrink-0 text-blue-600" />
-          <span className="truncate">{review.subject || "(no subject)"}</span>
-        </CardTitle>
-        <p className="mt-1 truncate text-sm text-slate-500">from {review.sender}</p>
-      </div>
-      <div className="flex shrink-0 flex-col items-end gap-2">
-        <ClassificationBadge review={review} />
-        <AssigneeSelect review={review} teamMembers={teamMembers} onAssign={onAssign} />
-      </div>
-    </CardHeader>
-  );
-}
-
-function AssigneeSelect({
-  review,
-  teamMembers,
-  onAssign,
-}: {
-  review: Review;
-  teamMembers: TeamMember[];
-  onAssign: (assignedTo: string | null) => Promise<void>;
-}) {
-  const [busy, setBusy] = useState(false);
-
-  async function handleChange(e: React.ChangeEvent<HTMLSelectElement>) {
-    setBusy(true);
-    try {
-      await onAssign(e.target.value || null);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <select
-      value={review.assigned_to ?? ""}
-      onChange={handleChange}
-      disabled={busy}
-      aria-label="Assign to a team member"
-      className="max-w-[200px] rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 shadow-sm focus:border-blue-500 focus:outline-none disabled:opacity-60"
-    >
-      <option value="">Unassigned</option>
-      {teamMembers.map((m) => (
-        <option key={m.id} value={m.id}>
-          {m.full_name || m.email}
-        </option>
-      ))}
-    </select>
-  );
-}
-
-function PendingCard({
-  review,
-  templates,
-  teamMembers,
-  onSave,
-  onApprove,
-  onReject,
-  onAssign,
-}: {
-  review: Review;
-  templates: Template[];
-  teamMembers: TeamMember[];
-  onSave: (body: string) => Promise<void>;
-  onApprove: (body: string) => Promise<void>;
-  onReject: () => Promise<void>;
-  onAssign: (assignedTo: string | null) => Promise<void>;
-}) {
-  const [body, setBody] = useState(review.draft_body);
-  const [busy, setBusy] = useState<null | "save" | "approve" | "reject">(null);
-  const dirty = body !== review.draft_body;
-
-  function insertTemplate(id: string) {
-    const tpl = templates.find((t) => t.id === id);
-    if (!tpl) return;
-    setBody((b) => (b.trimEnd() ? `${b.trimEnd()}\n\n${tpl.body}` : tpl.body));
-  }
-
-  const run = (kind: "save" | "approve" | "reject", fn: () => Promise<void>) => async () => {
-    setBusy(kind);
-    try {
-      await fn();
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  return (
-    <Card>
-      <CardHead review={review} teamMembers={teamMembers} onAssign={onAssign} />
-      <CardContent className="space-y-4">
-        <MetaRow review={review} />
-        <div>
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
-              Draft reply {dirty && <span className="text-amber-600">· edited (unsaved)</span>}
-            </p>
-            {templates.length > 0 && (
-              <select
-                value=""
-                onChange={(e) => {
-                  insertTemplate(e.target.value);
-                  e.currentTarget.value = "";
-                }}
-                className="max-w-[220px] rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 shadow-sm focus:border-blue-500 focus:outline-none"
-                aria-label="Insert a canned-response template"
-              >
-                <option value="">+ Insert template…</option>
-                {templates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.title}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-          <Textarea
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            className="min-h-[180px] font-normal"
-          />
-        </div>
-        {review.citations.length > 0 && <Citations citations={review.citations} />}
-        <NotesPanel reviewId={review.id} />
-        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 pt-4">
-          <Button variant="outline" onClick={run("reject", onReject)} disabled={busy !== null}>
-            {busy === "reject" ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
-            Reject
-          </Button>
-          <Button
-            variant="outline"
-            onClick={run("save", () => onSave(body))}
-            disabled={!dirty || busy !== null}
-          >
-            {busy === "save" ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save edits"}
-          </Button>
-          <Button
-            onClick={run("approve", () => onApprove(body))}
-            disabled={busy !== null}
-            className="bg-blue-600 text-white hover:bg-blue-700"
-          >
-            {busy === "approve" ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <ClipboardCheck className="h-4 w-4" />
-            )}
-            Approve → Gmail Drafts
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function ApprovedCard({
-  review,
-  teamMembers,
-  onSend,
-  onAssign,
-}: {
-  review: Review;
-  teamMembers: TeamMember[];
-  onSend: () => Promise<void>;
-  onAssign: (assignedTo: string | null) => Promise<void>;
-}) {
-  const [busy, setBusy] = useState(false);
-  return (
-    <Card>
-      <CardHead review={review} teamMembers={teamMembers} onAssign={onAssign} />
-      <CardContent className="space-y-4">
-        <div className="whitespace-pre-line rounded-lg border border-slate-200 bg-white p-4 text-sm leading-relaxed text-slate-800 shadow-inner">
-          {review.draft_body}
-        </div>
-        <NotesPanel reviewId={review.id} />
-        <div className="flex items-center justify-between gap-2 border-t border-slate-100 pt-4">
-          <span className="text-xs text-slate-400">In Gmail Drafts · not yet sent</span>
-          <Button
-            onClick={async () => {
-              setBusy(true);
-              try {
-                await onSend();
-              } finally {
-                setBusy(false);
-              }
-            }}
-            disabled={busy}
-            className="bg-emerald-600 text-white hover:bg-emerald-700"
-          >
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            Send reply
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function Citations({ citations }: { citations: Citation[] }) {
-  return (
-    <div className="flex flex-wrap gap-2">
-      {citations.map((c) => (
-        <span
-          key={c.document_id}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-600"
-        >
-          <span className="font-medium text-slate-500">{c.source}</span>
-          <span className="text-slate-300">·</span>
-          <span className="truncate">{c.title}</span>
-        </span>
-      ))}
-    </div>
-  );
-}
-
-function NotesPanel({ reviewId }: { reviewId: string }) {
-  const [open, setOpen] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-  const [loadingNotes, setLoadingNotes] = useState(false);
-  const [notes, setNotes] = useState<ReviewNote[]>([]);
-  const [draft, setDraft] = useState("");
-  const [posting, setPosting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function toggle() {
-    const next = !open;
-    setOpen(next);
-    if (next && !loaded) {
-      setLoadingNotes(true);
-      setError(null);
-      try {
-        setNotes(await listReviewNotes(reviewId));
-        setLoaded(true);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to load notes");
-      } finally {
-        setLoadingNotes(false);
-      }
-    }
-  }
-
-  async function addNote() {
-    const body = draft.trim();
-    if (!body) return;
-    setPosting(true);
-    setError(null);
-    try {
-      const note = await addReviewNote(reviewId, body);
-      setNotes((ns) => [...ns, note]);
-      setDraft("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to add note");
-    } finally {
-      setPosting(false);
-    }
-  }
-
-  return (
-    <div className="rounded-lg border border-slate-200">
-      <button
-        type="button"
-        onClick={() => void toggle()}
-        className="flex w-full items-center justify-between gap-2 px-3.5 py-2.5 text-left text-xs font-medium text-slate-600 hover:bg-slate-50"
-      >
-        <span className="flex items-center gap-1.5">
-          <MessageSquare className="h-3.5 w-3.5" />
-          Internal notes{loaded && notes.length > 0 ? ` (${notes.length})` : ""}
-        </span>
-        <span className="text-slate-400">{open ? "Hide" : "Show"}</span>
-      </button>
-      {open && (
-        <div className="space-y-3 border-t border-slate-100 px-3.5 py-3">
-          {loadingNotes ? (
-            <p className="text-xs text-slate-400">Loading notes…</p>
-          ) : notes.length === 0 ? (
-            <p className="text-xs text-slate-400">No notes yet.</p>
+        {/* Reviews Grid */}
+        <div className="space-y-4">
+          {loading ? (
+            Array.from({ length: 3 }).map((_, i) => (
+              <Card key={i}>
+                <CardHeader>
+                  <Skeleton className="h-6 w-1/2" />
+                </CardHeader>
+                <CardContent>
+                  <Skeleton className="h-20" />
+                </CardContent>
+              </Card>
+            ))
+          ) : filteredReviews.length === 0 ? (
+            <Card>
+              <CardContent className="py-12 text-center">
+                <Mail className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                <p className="text-gray-600">No reviews found</p>
+              </CardContent>
+            </Card>
           ) : (
-            <ul className="space-y-2">
-              {notes.map((n) => (
-                <li key={n.id} className="rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-700">
-                  <p className="whitespace-pre-line">{n.body}</p>
-                  <p className="mt-1 text-[11px] text-slate-400">
-                    {new Date(n.created_at).toLocaleString()}
-                  </p>
-                </li>
-              ))}
-            </ul>
+            filteredReviews.map((review) => (
+              <ReviewCard key={review.id} review={review} onAction={handleAction} />
+            ))
           )}
-          {error && <p className="text-xs text-red-600">{error}</p>}
-          <div className="flex items-start gap-2">
-            <Textarea
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder="Add an internal note…"
-              className="min-h-[60px] flex-1 text-xs"
-            />
-            <Button
-              variant="outline"
-              onClick={() => void addNote()}
-              disabled={posting || !draft.trim()}
-            >
-              {posting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add"}
-            </Button>
-          </div>
         </div>
-      )}
-    </div>
-  );
-}
-
-/* ── Layout bits ───────────────────────────────────── */
-
-function Section({
-  title,
-  count,
-  children,
-}: {
-  title: string;
-  count: number;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="space-y-4">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-        {title} <span className="ml-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs">{count}</span>
-      </h2>
-      {children}
-    </section>
-  );
-}
-
-function EmptyRow({ text }: { text: string }) {
-  return (
-    <Card className="border-dashed">
-      <CardContent className="py-8 text-center text-sm text-slate-500">{text}</CardContent>
-    </Card>
-  );
-}
-
-function SignInState({ onError }: { onError: (m: string) => void }) {
-  const [busy, setBusy] = useState(false);
-  return (
-    <Card className="border-dashed">
-      <CardContent className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100">
-          <ShieldAlert className="h-6 w-6 text-slate-400" />
-        </div>
-        <div>
-          <p className="font-medium text-slate-700">Sign in to review drafts</p>
-          <p className="mt-1 text-sm text-slate-500">
-            Sign in with your clinic Google account to see the review queue.
-          </p>
-        </div>
-        <Button
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            try {
-              await startGoogleSignIn("/reviews");
-            } catch (e) {
-              onError(e instanceof Error ? e.message : "sign-in failed");
-              setBusy(false);
-            }
-          }}
-          className="bg-blue-600 text-white hover:bg-blue-700"
-        >
-          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign in with Google"}
-        </Button>
-      </CardContent>
-    </Card>
-  );
-}
-
-function LoadingState() {
-  return (
-    <div className="space-y-4">
-      {[0, 1].map((i) => (
-        <Card key={i}>
-          <CardHeader>
-            <Skeleton className="h-5 w-64" />
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex gap-2">
-              <Skeleton className="h-6 w-24 rounded-full" />
-              <Skeleton className="h-6 w-24 rounded-full" />
-            </div>
-            <Skeleton className="h-2 w-full rounded-full" />
-            <Skeleton className="h-28 w-full" />
-          </CardContent>
-        </Card>
-      ))}
-    </div>
+      </div>
+    </DashboardLayout>
   );
 }

@@ -29,6 +29,17 @@ class DraftReviewRepository:
         await self.session.refresh(review)
         return review
 
+    async def existing_message_ids(self, user_id: uuid.UUID) -> set[str]:
+        """Gmail message IDs this user already has a review for (any status).
+
+        Used by the Gmail "pull" workflow to skip messages already triaged so a
+        repeated pull is idempotent and never creates duplicate review cards.
+        """
+        result = await self.session.execute(
+            select(DraftReview.gmail_message_id).where(DraftReview.user_id == user_id)
+        )
+        return {mid for mid in result.scalars().all() if mid}
+
     async def list_pending(self, user_id: uuid.UUID, *, limit: int = 50) -> list[DraftReview]:
         """Pending reviews for a user, newest first."""
         return await self.list_by_status(user_id, ReviewStatus.pending.value, limit=limit)
@@ -90,3 +101,31 @@ class DraftReviewRepository:
         await self.session.commit()
         await self.session.refresh(review)
         return review
+
+    async def add_specialist_input(
+        self, review: DraftReview, *, specialist_input: str, specialist_id: uuid.UUID
+    ) -> DraftReview:
+        """Record specialist input for an escalated review."""
+        review.specialist_input = specialist_input
+        review.specialist_id = specialist_id
+        review.specialist_input_at = dt.datetime.now(dt.UTC)
+        review.status = ReviewStatus.specialist_input_received.value
+        await self.session.commit()
+        await self.session.refresh(review)
+        return review
+
+    async def list_awaiting_specialist(
+        self, user_id: uuid.UUID, *, limit: int = 50
+    ) -> list[DraftReview]:
+        """Reviews awaiting specialist input."""
+        return await self.list_by_status(
+            user_id, ReviewStatus.awaiting_specialist_input.value, limit=limit
+        )
+
+    async def list_specialist_input_received(
+        self, user_id: uuid.UUID, *, limit: int = 50
+    ) -> list[DraftReview]:
+        """Reviews with specialist input received, awaiting draft revision."""
+        return await self.list_by_status(
+            user_id, ReviewStatus.specialist_input_received.value, limit=limit
+        )

@@ -24,6 +24,7 @@ from app.schemas.review import (
     ReviewList,
     ReviewReject,
     ReviewStatus,
+    SpecialistInput,
 )
 from app.services.gmail_service import GmailApiError, GmailNotConnectedError
 from app.services.workflow_service import WorkflowService
@@ -108,7 +109,7 @@ async def get_review(
 @router.patch(
     "/{review_id}",
     response_model=DraftReviewRead,
-    summary="Edit the drafted reply text (pending only)",
+    summary="Edit the drafted reply text (pending or specialist_input_received)",
 )
 async def edit_review(
     review_id: str,
@@ -117,7 +118,11 @@ async def edit_review(
     session: AsyncSession = Depends(get_db),
 ) -> DraftReviewRead:
     review = await _load_owned(review_id, current_user, session)
-    _require_status(review, ReviewStatus.pending)
+    if review.status not in (ReviewStatus.pending.value, ReviewStatus.specialist_input_received.value):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot edit review in {review.status} status.",
+        )
     updated = await DraftReviewRepository(session).update_body(
         review, draft_body=payload.draft_body
     )
@@ -135,7 +140,11 @@ async def approve_review(
     session: AsyncSession = Depends(get_db),
 ) -> DraftReviewRead:
     review = await _load_owned(review_id, current_user, session)
-    _require_status(review, ReviewStatus.pending)
+    if review.status not in (ReviewStatus.pending.value, ReviewStatus.specialist_input_received.value):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot approve review in {review.status} status.",
+        )
     try:
         updated = await WorkflowService(session).approve(current_user, review)
     except GmailNotConnectedError as exc:
@@ -160,8 +169,35 @@ async def reject_review(
     session: AsyncSession = Depends(get_db),
 ) -> DraftReviewRead:
     review = await _load_owned(review_id, current_user, session)
-    _require_status(review, ReviewStatus.pending)
+    if review.status not in (ReviewStatus.pending.value, ReviewStatus.specialist_input_received.value):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot reject review in {review.status} status.",
+        )
     updated = await WorkflowService(session).reject(current_user, review, payload.reason)
+    return DraftReviewRead.model_validate(updated)
+
+
+@router.post(
+    "/{review_id}/specialist-input",
+    response_model=DraftReviewRead,
+    summary="Submit specialist input for an escalated review",
+)
+async def submit_specialist_input(
+    review_id: str,
+    payload: SpecialistInput,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> DraftReviewRead:
+    review = await _load_owned(review_id, current_user, session)
+    if review.status != ReviewStatus.awaiting_specialist_input.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Review must be awaiting specialist input (currently {review.status}).",
+        )
+    updated = await WorkflowService(session).receive_specialist_input(
+        current_user, review, payload.specialist_input, payload.should_revise_draft
+    )
     return DraftReviewRead.model_validate(updated)
 
 

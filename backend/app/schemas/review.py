@@ -14,13 +14,17 @@ class ReviewClassification(str, enum.Enum):
 
     ADMIN_DIRECT_REPLY = "ADMIN_DIRECT_REPLY"
     NEEDS_PHYSICIAN_REVIEW = "NEEDS_PHYSICIAN_REVIEW"
+    IRRELEVANT = "IRRELEVANT"
 
 
 class ReviewStatus(str, enum.Enum):
     pending = "pending"
+    awaiting_specialist_input = "awaiting_specialist_input"
+    specialist_input_received = "specialist_input_received"
     approved = "approved"
     rejected = "rejected"
     sent = "sent"
+    irrelevant = "irrelevant"
 
 
 class ReviewCitation(BaseModel):
@@ -40,6 +44,13 @@ class ReviewReject(BaseModel):
     """Reject a pending review with a brief reason."""
 
     reason: str = Field(default="", max_length=2000)
+
+
+class SpecialistInput(BaseModel):
+    """Specialist input for escalated emails."""
+
+    specialist_input: str = Field(min_length=1, max_length=5000)
+    should_revise_draft: bool = True
 
 
 class DraftReviewRead(BaseModel):
@@ -67,6 +78,9 @@ class DraftReviewRead(BaseModel):
     sent_at: datetime | None = None
     sent_message_id: str | None = None
     assigned_to: uuid.UUID | None = None
+    specialist_input: str | None = None
+    specialist_id: uuid.UUID | None = None
+    specialist_input_at: datetime | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

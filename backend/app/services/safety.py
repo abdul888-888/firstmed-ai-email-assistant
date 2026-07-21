@@ -33,6 +33,11 @@ def classify_review(triage: dict) -> tuple[ReviewClassification, str]:
     except (TypeError, ValueError):
         confidence = 0.0
 
+    if intent == Intent.irrelevant.value:
+        return (
+            ReviewClassification.IRRELEVANT,
+            "email is irrelevant to the clinic — no reply needed.",
+        )
     if intent in _CLINICAL_INTENTS:
         return (
             ReviewClassification.NEEDS_PHYSICIAN_REVIEW,
