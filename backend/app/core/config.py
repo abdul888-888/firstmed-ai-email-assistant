@@ -44,7 +44,16 @@ class Settings(BaseSettings):
     secret_key: SecretStr = SecretStr("change-me-in-production")
     access_token_expire_minutes: int = 60
     algorithm: str = "HS256"
-    backend_cors_origins: list[str] = ["http://localhost:3000"]
+    # In development, allow common localhost ports (3000, 3001, 3002, 3003, 5173, 5174)
+    # In production, this should be restricted to specific domain(s)
+    backend_cors_origins: list[str] = [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:3002",
+        "http://localhost:3003",
+        "http://localhost:5173",  # Vite dev server
+        "http://localhost:5174",  # Vite alt port
+    ]
     # Fernet key (urlsafe base64, 32 bytes) for encrypting stored OAuth tokens.
     # Empty => a deterministic key is derived from ``secret_key`` (dev only).
     token_encryption_key: SecretStr = SecretStr("")
