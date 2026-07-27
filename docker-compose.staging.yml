@@ -1,0 +1,175 @@
+version: '3.9'
+
+services:
+  # PostgreSQL Database (Production-grade)
+  postgres:
+    image: postgres:15-alpine
+    container_name: firstmed-postgres-staging
+    environment:
+      POSTGRES_DB: firstmed_staging
+      POSTGRES_USER: firstmed_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-staging_password_change_me}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U firstmed_user -d firstmed_staging"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - firstmed-network
+
+  # Redis Cache & Message Broker
+  redis:
+    image: redis:7-alpine
+    container_name: firstmed-redis-staging
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - firstmed-network
+
+  # FastAPI Backend
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: firstmed-api-staging
+    environment:
+      ENVIRONMENT: staging
+      DEBUG: "false"
+      LOG_LEVEL: INFO
+
+      # Database
+      DATABASE_URL: postgresql://firstmed_user:${POSTGRES_PASSWORD:-staging_password_change_me}@postgres:5432/firstmed_staging
+
+      # Redis
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+
+      # Secrets (MUST CHANGE THESE IN PRODUCTION)
+      SECRET_KEY: ${SECRET_KEY:-staging-secret-key-change-me-in-production}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-gAAAAABnGJ8Z6x_K5L9M2N3O4P5Q6R7S8T9U0V1W2X3Y4Z5}
+      PHI_ENCRYPTION_KEY: ${PHI_ENCRYPTION_KEY:-gAAAAABnGJ8Z6x_K5L9M2N3O4P5Q6R7S8T9U0V1W2X3Y4Z5}
+
+      # Google OAuth
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_REDIRECT_URI: http://localhost:8000/api/v1/auth/google/callback
+
+      # Notion (leave empty to use demo data)
+      NOTION_API_KEY: ${NOTION_API_KEY:-}
+      NOTION_ROOT_PAGE_ID: ${NOTION_ROOT_PAGE_ID:-}
+
+      # Anthropic (optional, leave empty for demo)
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_BAA_SIGNED: "false"
+
+      # Frontend URL
+      FRONTEND_BASE_URL: http://localhost:3000
+      BACKEND_CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - firstmed-network
+    volumes:
+      - ./backend:/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Celery Worker (Background Tasks)
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: firstmed-celery-worker-staging
+    command: celery -A app.workers.celery_app.celery_app worker --loglevel=info --concurrency=4
+    environment:
+      ENVIRONMENT: staging
+      DEBUG: "false"
+      LOG_LEVEL: INFO
+
+      DATABASE_URL: postgresql://firstmed_user:${POSTGRES_PASSWORD:-staging_password_change_me}@postgres:5432/firstmed_staging
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+
+      SECRET_KEY: ${SECRET_KEY:-staging-secret-key-change-me-in-production}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-gAAAAABnGJ8Z6x_K5L9M2N3O4P5Q6R7S8T9U0V1W2X3Y4Z5}
+      PHI_ENCRYPTION_KEY: ${PHI_ENCRYPTION_KEY:-gAAAAABnGJ8Z6x_K5L9M2N3O4P5Q6R7S8T9U0V1W2X3Y4Z5}
+
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      NOTION_API_KEY: ${NOTION_API_KEY:-}
+      NOTION_ROOT_PAGE_ID: ${NOTION_ROOT_PAGE_ID:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_BAA_SIGNED: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - firstmed-network
+    volumes:
+      - ./backend:/app
+
+  # Celery Beat (Periodic Tasks Scheduler)
+  celery_beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: firstmed-celery-beat-staging
+    command: celery -A app.workers.celery_app.celery_app beat --loglevel=info
+    environment:
+      ENVIRONMENT: staging
+      DEBUG: "false"
+      LOG_LEVEL: INFO
+
+      DATABASE_URL: postgresql://firstmed_user:${POSTGRES_PASSWORD:-staging_password_change_me}@postgres:5432/firstmed_staging
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+
+      SECRET_KEY: ${SECRET_KEY:-staging-secret-key-change-me-in-production}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-gAAAAABnGJ8Z6x_K5L9M2N3O4P5Q6R7S8T9U0V1W2X3Y4Z5}
+      PHI_ENCRYPTION_KEY: ${PHI_ENCRYPTION_KEY:-gAAAAABnGJ8Z6x_K5L9M2N3O4P5Q6R7S8T9U0V1W2X3Y4Z5}
+
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      NOTION_API_KEY: ${NOTION_API_KEY:-}
+      NOTION_ROOT_PAGE_ID: ${NOTION_ROOT_PAGE_ID:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_BAA_SIGNED: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - firstmed-network
+    volumes:
+      - ./backend:/app
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  firstmed-network:
+    driver: bridge
