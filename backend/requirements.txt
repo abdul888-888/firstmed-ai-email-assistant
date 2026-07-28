@@ -39,4 +39,4 @@ anthropic==0.116.0
 # --- Embeddings / semantic retrieval (Phase 9) ---
 # Local, offline embeddings (ONNX). Downloads the model on first use.
 # Swap to OpenAI/Voyage via EMBEDDING_PROVIDER (add their SDK if used).
-fastembed==0.4.2
+fastembed==0.5.0

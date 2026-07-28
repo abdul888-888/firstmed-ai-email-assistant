@@ -271,7 +271,7 @@ export default function TokenStatusPage() {
               • Your authentication token is valid for <strong>60 minutes</strong> from the time you sign in
             </p>
             <p>
-              • When expired, you'll need to sign in again to continue using the app
+              • When expired, you&rsquo;ll need to sign in again to continue using the app
             </p>
             <p>
               • This page updates in real-time and displays your token status
