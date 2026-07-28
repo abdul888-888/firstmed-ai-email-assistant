@@ -22,7 +22,8 @@ export function AuthControls() {
     setBusy(true);
     setError(null);
     try {
-      await startGoogleSignIn();
+      // Land users straight in the app after Google sign-in, not back here.
+      await startGoogleSignIn("/reviews");
     } catch (err) {
       setError(err instanceof Error ? err.message : "sign-in failed");
       setBusy(false);
