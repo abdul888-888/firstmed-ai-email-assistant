@@ -2,7 +2,7 @@
 # Each line defines a deployable service
 
 # FastAPI Backend API (main HTTP service)
-api: cd backend && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+api: exec sh -c 'cd backend && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}'
 
 # Celery Worker (background task processing)
 worker: cd backend && celery -A app.workers.celery_app.celery_app worker --loglevel=info --concurrency=4
