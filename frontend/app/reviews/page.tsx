@@ -1,5 +1,6 @@
 "use client";
 
+// Force Vercel rebuild - ensure DashboardLayout is rendered
 import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle,
