@@ -44,19 +44,14 @@ class Settings(BaseSettings):
     secret_key: SecretStr = SecretStr("change-me-in-production")
     access_token_expire_minutes: int = 60
     algorithm: str = "HS256"
-    # In development, allow common localhost ports (3000, 3001, 3002, 3003, 5173, 5174)
-    # In production, this should be restricted to specific domain(s)
-    backend_cors_origins: list[str] = [
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://localhost:3002",
-        "http://localhost:3003",
-        "http://localhost:5173",  # Vite dev server
-        "http://localhost:5174",  # Vite alt port
-    ]
+    backend_cors_origins: list[str] = ["http://localhost:3000"]
     # Fernet key (urlsafe base64, 32 bytes) for encrypting stored OAuth tokens.
     # Empty => a deterministic key is derived from ``secret_key`` (dev only).
     token_encryption_key: SecretStr = SecretStr("")
+    # Separate Fernet key protecting patient-identifying review content at rest
+    # (see app.models.types.EncryptedText) — independent from the token key so
+    # the two can be rotated separately. Empty => dev-only derived fallback.
+    phi_encryption_key: SecretStr = SecretStr("")
 
     # --- Frontend ---
     # Where the OAuth callback redirects the browser after login succeeds.
@@ -92,6 +87,13 @@ class Settings(BaseSettings):
     # but NOT adaptive thinking — the AI client gates thinking on model support.
     ai_model: str = "claude-haiku-4-5"
     ai_max_tokens: int = 4096
+    # Self-attestation only — set true once your organization has confirmed a
+    # signed BAA (HIPAA) and/or DPA (GDPR) with Anthropic covering this API
+    # usage. Not verified against anything external; see
+    # docs/security/phi-encryption-and-anthropic-baa.md for what to request.
+    # In production, sending real patient data via a configured API key
+    # without this confirmed is refused at startup (see the validator below).
+    anthropic_baa_signed: bool = False
 
     # --- Embeddings / semantic retrieval (Phase 9) ---
     # Provider is swappable: local (fastembed, no key) | openai | voyage.
@@ -120,6 +122,10 @@ class Settings(BaseSettings):
     # --- Celery ---
     celery_broker_url: str = "redis://localhost:6379/1"
     celery_result_backend: str = "redis://localhost:6379/2"
+    # How often the Beat-scheduled task fans out an automatic pull to every
+    # connected mailbox (see app.tasks.workflow_tasks.pull_all_connected_task).
+    # Only takes effect while a `celery beat` process is running.
+    gmail_auto_pull_interval_seconds: int = 300
 
     @field_validator("backend_cors_origins", "google_oauth_scopes", mode="before")
     @classmethod
@@ -175,7 +181,14 @@ class Settings(BaseSettings):
     @property
     def sqlalchemy_database_uri(self) -> str:
         if self.database_url:
-            return self.database_url
+            url = str(self.database_url)
+            # Ensure Railway's URL uses asyncpg instead of default psycopg2
+            if url.startswith("postgres://"):
+                return url.replace("postgres://", "postgresql+asyncpg://", 1)
+            if url.startswith("postgresql://") and not url.startswith("postgresql+asyncpg://"):
+                return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            return url
+
         return (
             f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password.get_secret_value()}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
@@ -206,8 +219,19 @@ class Settings(BaseSettings):
             problems.append(
                 "TOKEN_ENCRYPTION_KEY must be set explicitly (no derived dev fallback)"
             )
+        if not self.phi_encryption_key.get_secret_value():
+            problems.append(
+                "PHI_ENCRYPTION_KEY must be set explicitly (no derived dev fallback) — "
+                "protects patient data at rest"
+            )
         if self.postgres_password.get_secret_value().strip().lower() in _INSECURE_DB_PASSWORDS:
             problems.append("POSTGRES_PASSWORD must not use a development default")
+        if self.ai_configured and not self.anthropic_baa_signed:
+            problems.append(
+                "ANTHROPIC_BAA_SIGNED must be true before processing real patient data "
+                "through the Anthropic API in production — confirm a signed BAA/DPA with "
+                "Anthropic first (see docs/security/phi-encryption-and-anthropic-baa.md)"
+            )
 
         if problems:
             raise ValueError(
