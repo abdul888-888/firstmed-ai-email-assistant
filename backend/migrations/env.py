@@ -1,22 +1,27 @@
-"""Alembic environment (async).
-
-Uses the application's async engine and metadata so migrations stay in sync with
-the SQLAlchemy models.
-"""
-
 from __future__ import annotations
 
 import asyncio
 from logging.config import fileConfig
-
 from alembic import context
 from app.core.config import settings
 from app.models import Base  # noqa: F401 - ensures all models are imported
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from sqlalchemy.pool import NullPool
 
+# --- DRIVER CONVERSION HELPER ---
+# Ensures the URI uses asyncpg instead of defaulting to psycopg2
+def get_async_db_uri(url: str) -> str:
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+asyncpg://", 1)
+    elif url.startswith("postgresql://") and not url.startswith("postgresql+asyncpg://"):
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    return url
+
+# Get the properly formatted async URI
+db_uri = get_async_db_uri(str(settings.sqlalchemy_database_uri))
+
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.sqlalchemy_database_uri)
+config.set_main_option("sqlalchemy.url", db_uri)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -26,7 +31,7 @@ target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=settings.sqlalchemy_database_uri,
+        url=db_uri,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -48,7 +53,7 @@ def do_run_migrations(connection) -> None:
 
 async def run_migrations_online() -> None:
     connectable = async_engine_from_config(
-        {"sqlalchemy.url": settings.sqlalchemy_database_uri},
+        {"sqlalchemy.url": db_uri},
         prefix="sqlalchemy.",
         poolclass=NullPool,
     )
