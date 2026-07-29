@@ -8,7 +8,7 @@
     "restartPolicyMaxRetries": 10,
     "services": {
       "api": {
-        "startCommand": "sh -c 'cd backend && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}'"
+        "startCommand": "sh -c 'cd backend && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000'"
       },
       "worker": {
         "startCommand": "cd backend && celery -A app.workers.celery_app worker --loglevel=info --concurrency=4"
