@@ -6,11 +6,29 @@ import datetime as dt
 import uuid
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.draft_review import DraftReview
 from app.schemas.review import ReviewStatus
+
+
+class DuplicateReviewError(Exception):
+    """Raised when a (user_id, gmail_message_id) review already exists.
+
+    Surfaces the DB-level unique constraint as a typed error so callers (the
+    Gmail pull loop, the direct single-message endpoint) can treat a race as a
+    benign "already processed" rather than an unexpected failure.
+    """
+
+
+class StaleReviewStatusError(Exception):
+    """Raised when an atomic status transition finds the review already moved.
+
+    Means a concurrent request (another staff member, or a retry) won the race
+    to act on this review first.
+    """
 
 
 class DraftReviewRepository:
@@ -25,7 +43,50 @@ class DraftReviewRepository:
     async def create(self, **fields: Any) -> DraftReview:
         review = DraftReview(**fields)
         self.session.add(review)
+        try:
+            await self.session.commit()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise DuplicateReviewError(
+                f"A review already exists for user={fields.get('user_id')} "
+                f"gmail_message_id={fields.get('gmail_message_id')!r}"
+            ) from exc
+        await self.session.refresh(review)
+        return review
+
+    async def claim_status(
+        self, review_id: uuid.UUID, *, from_statuses: list[str], to_status: str
+    ) -> DraftReview:
+        """Atomically transition ``review_id`` from one of ``from_statuses`` to
+        ``to_status`` and return the updated row.
+
+        Uses a single ``UPDATE ... WHERE id = :id AND status IN (:from_statuses)``
+        so the transition is race-safe under concurrent requests: if two staff
+        (or a double-click) both attempt the same action, only one UPDATE
+        matches a row — the other affects zero rows and raises
+        :class:`StaleReviewStatusError`. Callers MUST claim before performing any
+        outward-facing side effect (e.g. a Gmail API call) so at most one
+        concurrent caller ever reaches that side effect.
+        """
+        stmt = (
+            update(DraftReview)
+            .where(DraftReview.id == review_id, DraftReview.status.in_(from_statuses))
+            .values(status=to_status)
+        )
+        result = await self.session.execute(stmt)
+        if result.rowcount == 0:
+            await self.session.rollback()
+            raise StaleReviewStatusError(
+                f"Review {review_id} is not in one of {from_statuses} "
+                "(already acted on by another request)."
+            )
         await self.session.commit()
+        review = await self.get(review_id)
+        assert review is not None  # just updated within this transaction
+        # The UPDATE above went through Core, bypassing the ORM's identity map —
+        # with expire_on_commit=False (this app's session config), ``get()`` can
+        # return the SAME cached, now-stale Python object. Force a real reload so
+        # callers see the new status, not whatever was cached before the claim.
         await self.session.refresh(review)
         return review
 

@@ -1,6 +1,7 @@
 "use client";
 
-// Force Vercel rebuild - file exists at correct path
+// Match the exact filename casing!
+
 import { useEffect, useState } from "react";
 import { Sidebar } from "@/components/sidebar";
 import { jwtDecode } from "jwt-decode";

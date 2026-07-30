@@ -3,6 +3,7 @@ draft pipeline on a Gmail message and persist a pending review."""
 
 from __future__ import annotations
 
+from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,9 +13,12 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.logging import get_logger
 from app.models.user import User
+from app.repositories.draft_review import DuplicateReviewError
 from app.schemas.review import DraftReviewRead
 from app.services.gmail_service import GmailApiError, GmailNotConnectedError
 from app.services.workflow_service import WorkflowService
+from app.tasks.workflow_tasks import DEFAULT_PULL_QUERY, pull_gmail_task
+from app.workers.celery_app import celery_app
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 logger = get_logger(__name__)
@@ -63,6 +67,47 @@ async def pull_gmail(
 
 
 @router.post(
+    "/pull-async",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Enqueue a background Gmail pull (Celery) — returns immediately with a task id",
+)
+async def pull_gmail_async(
+    max_results: int = 12,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Non-blocking variant of ``POST /pull``: enqueues the same triage
+    pipeline on a Celery worker instead of running it inline the HTTP request,
+    so it can't hit a request timeout and per-message Gmail/AI errors can be
+    retried. Requires a Celery worker to be running
+    (``celery -A app.workers.celery_app worker``) — otherwise the task sits
+    queued until one picks it up. Poll ``GET /pull-async/{task_id}`` for the
+    result. The existing synchronous ``POST /pull`` is unchanged and still
+    works with no worker running.
+    """
+    if not settings.ai_configured:
+        raise _NOT_CONFIGURED
+    task = pull_gmail_task.delay(str(current_user.id), max_results, DEFAULT_PULL_QUERY)
+    return {"task_id": task.id, "status": "queued"}
+
+
+@router.get(
+    "/pull-async/{task_id}",
+    summary="Check the status/result of a background Gmail pull",
+)
+async def pull_gmail_async_status(
+    task_id: str,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    result = AsyncResult(task_id, app=celery_app)
+    body: dict = {"task_id": task_id, "state": result.state}
+    if result.state == "SUCCESS":
+        body["result"] = result.result
+    elif result.state == "FAILURE":
+        body["error"] = str(result.result)
+    return body
+
+
+@router.post(
     "/gmail/{message_id}",
     response_model=DraftReviewRead,
     summary="Run the workflow pipeline on a Gmail message → pending review",
@@ -76,6 +121,11 @@ async def run_gmail(
         raise _NOT_CONFIGURED
     try:
         review = await WorkflowService(session).run_gmail(current_user, message_id)
+    except DuplicateReviewError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This message has already been triaged (a review already exists).",
+        ) from exc
     except GmailNotConnectedError as exc:
         raise _NOT_CONNECTED from exc
     except AINotConfiguredError as exc:

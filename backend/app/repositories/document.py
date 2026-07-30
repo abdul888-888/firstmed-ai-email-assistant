@@ -13,6 +13,12 @@ from app.models.document import Document
 
 __all__ = ["DocumentRepository"]
 
+# Each term adds two ILIKE clauses to the candidate OR; SQLite caps expression
+# trees at depth 1000, so an unbounded term list (e.g. a long inbound email)
+# crashes the query. Beyond a few dozen terms an OR-any match already returns
+# nearly the whole index, so capping loses no meaningful recall.
+_MAX_CANDIDATE_TERMS = 40
+
 
 class DocumentRepository:
     """Persistence + candidate retrieval for the unified document index."""
@@ -100,6 +106,7 @@ class DocumentRepository:
         if sources:
             stmt = stmt.where(Document.source.in_(sources))
         if terms:
+            capped = terms[:_MAX_CANDIDATE_TERMS]
             stmt = stmt.where(
                 or_(
                     *[
@@ -107,7 +114,7 @@ class DocumentRepository:
                             Document.title.ilike(f"%{term}%"),
                             Document.content.ilike(f"%{term}%"),
                         )
-                        for term in terms
+                        for term in capped
                     ]
                 )
             )

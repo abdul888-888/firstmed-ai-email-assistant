@@ -128,6 +128,85 @@ async def test_get_page_title(notion_configured):
     assert data["url"] == "https://notion.so/page-9"
 
 
+async def test_query_database_flattens_property_values(notion_configured):
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/databases/db-1/query"
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "id": "row-1",
+                        "object": "page",
+                        "url": "https://notion.so/row-1",
+                        "last_edited_time": "2026-03-01T00:00:00.000Z",
+                        "properties": {
+                            "Service": {
+                                "type": "title",
+                                "title": [{"plain_text": "MRI Scan"}],
+                            },
+                            "Self-Pay Price": {"type": "number", "number": 650},
+                            "Category": {
+                                "type": "select",
+                                "select": {"name": "Imaging"},
+                            },
+                            "Insurers": {
+                                "type": "multi_select",
+                                "multi_select": [{"name": "Aetna"}, {"name": "Cigna"}],
+                            },
+                        },
+                    }
+                ],
+                "has_more": False,
+                "next_cursor": None,
+            },
+        )
+
+    svc = _service(handler)
+    data = await svc.query_database("db-1")
+    await svc._client.aclose()
+
+    row = data["results"][0]
+    assert row["title"] == "MRI Scan"
+    assert row["properties"]["Self-Pay Price"] == "650"
+    assert row["properties"]["Category"] == "Imaging"
+    assert row["properties"]["Insurers"] == "Aetna, Cigna"
+    # Flattened content carries the price so retrieval can match it.
+    assert "650" in row["content"]
+
+
+async def test_search_follows_pagination(notion_configured):
+    pages = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        pages["n"] += 1
+        if pages["n"] == 1:
+            return httpx.Response(
+                200,
+                json={
+                    "results": [{"id": "a", "object": "page", "properties": {}}],
+                    "has_more": True,
+                    "next_cursor": "cursor-2",
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "results": [{"id": "b", "object": "page", "properties": {}}],
+                "has_more": False,
+                "next_cursor": None,
+            },
+        )
+
+    svc = _service(handler)
+    data = await svc.search("x")
+    await svc._client.aclose()
+
+    assert pages["n"] == 2  # followed has_more to the second page
+    assert [r["id"] for r in data["results"]] == ["a", "b"]
+    assert data["has_more"] is False
+
+
 async def test_api_error_raises(notion_configured):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, text="unauthorized")

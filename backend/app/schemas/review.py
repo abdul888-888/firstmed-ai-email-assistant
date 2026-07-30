@@ -10,10 +10,18 @@ from pydantic import BaseModel, Field
 
 
 class ReviewClassification(str, enum.Enum):
-    """Binary safety-gate outcome derived from triage."""
+    """Safety-gate outcome derived from triage.
+
+    Only ``ADMIN_DIRECT_REPLY`` is ever eligible for an AI-generated draft. The
+    other outcomes are *hard exclusions*: the workflow persists a review record
+    with an empty draft and routes it to a human, never producing draft text.
+    """
 
     ADMIN_DIRECT_REPLY = "ADMIN_DIRECT_REPLY"
     NEEDS_PHYSICIAN_REVIEW = "NEEDS_PHYSICIAN_REVIEW"
+    # Non-clinical hard exclusions (appointments, complaints, legal, billing
+    # disputes): a staff member must handle these directly — never AI-drafted.
+    ROUTE_TO_STAFF = "ROUTE_TO_STAFF"
     IRRELEVANT = "IRRELEVANT"
 
 
@@ -25,6 +33,8 @@ class ReviewStatus(str, enum.Enum):
     rejected = "rejected"
     sent = "sent"
     irrelevant = "irrelevant"
+    # Excluded categories and knowledge-base misses: no AI draft; a human owns it.
+    needs_manual_handling = "needs_manual_handling"
 
 
 class ReviewCitation(BaseModel):

@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
 import {
   AlertTriangle,
   BarChart3,
@@ -10,16 +9,17 @@ import {
   Loader2,
   ShieldAlert,
   ShieldCheck,
-  Stethoscope,
   Timer,
+  RefreshCw,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { DashboardLayout } from "@/components/dashboard-layout";
 import { type AnalyticsSummary, getAnalyticsSummary } from "@/lib/analytics";
-import { getToken, startGoogleSignIn } from "@/lib/auth";
+import { clearToken, getToken, startGoogleSignIn } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 const RANGES = [
@@ -60,8 +60,10 @@ export default function AnalyticsPage() {
     try {
       setSummary(await getAnalyticsSummary(days));
     } catch (e) {
-      if (e instanceof Error && e.message.includes("401")) setSignedIn(false);
-      else setError(e instanceof Error ? e.message : "Failed to load");
+      if (e instanceof Error && e.message.includes("401")) {
+        clearToken();
+        setSignedIn(false);
+      } else setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
       setLoading(false);
     }
@@ -71,62 +73,49 @@ export default function AnalyticsPage() {
     void load(rangeDays);
   }, [load, rangeDays]);
 
-  return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white text-slate-900">
-      <header className="sticky top-0 z-10 border-b border-slate-200/70 bg-white/80 backdrop-blur">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-3.5">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-blue-600 to-blue-700 shadow-sm">
-              <Stethoscope className="h-5 w-5 text-white" />
+  const pageContent = (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 text-slate-900">
+      {/* Header */}
+      <header className="sticky top-0 z-40 border-b border-slate-200/50 bg-white/95 backdrop-blur-lg shadow-sm">
+        <div className="mx-auto max-w-7xl px-6 py-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight text-slate-900">Operational Performance</h1>
+              <p className="text-slate-600 text-sm font-medium mt-1">
+                Triage volume, response time, and operational proxy accuracy across all staff.
+              </p>
             </div>
-            <div className="leading-tight">
-              <p className="text-sm font-semibold">FirstMed</p>
-              <p className="text-xs text-slate-500">Analytics</p>
-            </div>
+            {signedIn && (
+              <Button variant="outline" onClick={() => void load(rangeDays)} disabled={loading} className="gap-2 border-slate-200">
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                Refresh
+              </Button>
+            )}
           </div>
-          <nav className="flex items-center gap-4 text-sm text-slate-500">
-            <Link href="/reviews" className="transition-colors hover:text-slate-900">
-              Reviews
-            </Link>
-            <Link href="/" className="transition-colors hover:text-slate-900">
-              Home
-            </Link>
-          </nav>
         </div>
+
+        {/* Range Selector */}
+        {signedIn && (
+          <div className="flex rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm w-fit">
+            {RANGES.map((r) => (
+              <button
+                key={r.label}
+                onClick={() => setRangeDays(r.days)}
+                className={cn(
+                  "rounded-md px-4 py-2 text-xs font-semibold transition-colors duration-200",
+                  rangeDays === r.days
+                    ? "bg-indigo-600 text-white shadow-sm"
+                    : "text-slate-600 hover:bg-slate-50",
+                )}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+        )}
       </header>
 
-      <main className="mx-auto max-w-5xl px-6 py-8">
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Analytics</h1>
-            <p className="mt-1.5 max-w-2xl text-slate-500">
-              Triage volume, response time, and a proxy for triage accuracy across all staff.
-            </p>
-          </div>
-          {signedIn && (
-            <div className="flex items-center gap-2">
-              <div className="flex rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm">
-                {RANGES.map((r) => (
-                  <button
-                    key={r.label}
-                    onClick={() => setRangeDays(r.days)}
-                    className={cn(
-                      "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                      rangeDays === r.days
-                        ? "bg-blue-600 text-white"
-                        : "text-slate-600 hover:bg-slate-100",
-                    )}
-                  >
-                    {r.label}
-                  </button>
-                ))}
-              </div>
-              <Button variant="outline" onClick={() => void load(rangeDays)} disabled={loading}>
-                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Refresh"}
-              </Button>
-            </div>
-          )}
-        </div>
+      <main className="mx-auto max-w-7xl px-6 py-8">
 
         {error && (
           <div className="mb-4 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -183,6 +172,8 @@ export default function AnalyticsPage() {
       </main>
     </div>
   );
+
+  return <DashboardLayout>{pageContent}</DashboardLayout>;
 }
 
 function StatTile({

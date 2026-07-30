@@ -39,14 +39,20 @@ def test_redis_uri_assembled():
     assert s.redis_uri == "redis://r:6380/3"
 
 
+_VALID_TOKEN_KEY = "dGVzdC1mZXJuZXQta2V5LXBsYWNlaG9sZGVyLTMyYg=="
+_VALID_PHI_KEY = "cGhpLWZlcm5ldC1rZXktcGxhY2Vob2xkZXItMzJieXQ="
+
+
 def test_is_production_flag():
     assert (
         Settings(
             _env_file=None,
             environment="production",
             secret_key="a-strong-unique-production-secret",
-            token_encryption_key="dGVzdC1mZXJuZXQta2V5LXBsYWNlaG9sZGVyLTMyYg==",
+            token_encryption_key=_VALID_TOKEN_KEY,
+            phi_encryption_key=_VALID_PHI_KEY,
             postgres_password="a-strong-unique-db-password",
+            anthropic_api_key="",  # hermetic: don't let an ambient env var trip the BAA gate
         ).is_production
         is True
     )
@@ -59,7 +65,8 @@ def test_production_rejects_insecure_secret_key():
             _env_file=None,
             environment="production",
             secret_key="change-me-in-production",
-            token_encryption_key="dGVzdC1mZXJuZXQta2V5LXBsYWNlaG9sZGVyLTMyYg==",
+            token_encryption_key=_VALID_TOKEN_KEY,
+            phi_encryption_key=_VALID_PHI_KEY,
             postgres_password="a-strong-unique-db-password",
         )
 
@@ -70,6 +77,18 @@ def test_production_rejects_missing_token_encryption_key():
             _env_file=None,
             environment="production",
             secret_key="a-strong-unique-production-secret",
+            phi_encryption_key=_VALID_PHI_KEY,
+            postgres_password="a-strong-unique-db-password",
+        )
+
+
+def test_production_rejects_missing_phi_encryption_key():
+    with pytest.raises(ValidationError, match="PHI_ENCRYPTION_KEY"):
+        Settings(
+            _env_file=None,
+            environment="production",
+            secret_key="a-strong-unique-production-secret",
+            token_encryption_key=_VALID_TOKEN_KEY,
             postgres_password="a-strong-unique-db-password",
         )
 
@@ -80,5 +99,48 @@ def test_production_rejects_default_db_password():
             _env_file=None,
             environment="production",
             secret_key="a-strong-unique-production-secret",
-            token_encryption_key="dGVzdC1mZXJuZXQta2V5LXBsYWNlaG9sZGVyLTMyYg==",
+            token_encryption_key=_VALID_TOKEN_KEY,
+            phi_encryption_key=_VALID_PHI_KEY,
         )
+
+
+def test_production_requires_anthropic_baa_when_ai_configured():
+    with pytest.raises(ValidationError, match="ANTHROPIC_BAA_SIGNED"):
+        Settings(
+            _env_file=None,
+            environment="production",
+            secret_key="a-strong-unique-production-secret",
+            token_encryption_key=_VALID_TOKEN_KEY,
+            phi_encryption_key=_VALID_PHI_KEY,
+            postgres_password="a-strong-unique-db-password",
+            anthropic_api_key="sk-ant-real-key",
+            anthropic_baa_signed=False,
+        )
+
+
+def test_production_allows_ai_configured_with_baa_signed():
+    s = Settings(
+        _env_file=None,
+        environment="production",
+        secret_key="a-strong-unique-production-secret",
+        token_encryption_key=_VALID_TOKEN_KEY,
+        phi_encryption_key=_VALID_PHI_KEY,
+        postgres_password="a-strong-unique-db-password",
+        anthropic_api_key="sk-ant-real-key",
+        anthropic_baa_signed=True,
+    )
+    assert s.ai_configured is True
+
+
+def test_production_without_anthropic_key_does_not_require_baa():
+    # No Anthropic key configured at all → the BAA gate doesn't apply.
+    s = Settings(
+        _env_file=None,
+        environment="production",
+        secret_key="a-strong-unique-production-secret",
+        token_encryption_key=_VALID_TOKEN_KEY,
+        phi_encryption_key=_VALID_PHI_KEY,
+        postgres_password="a-strong-unique-db-password",
+        anthropic_api_key="",  # hermetic: don't let an ambient env var trip the BAA gate
+    )
+    assert s.ai_configured is False

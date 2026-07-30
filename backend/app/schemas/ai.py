@@ -30,6 +30,13 @@ class Department(str, enum.Enum):
     front_office = "front_office"
     nurse = "nurse"
     specialist = "specialist"
+    # Domain-specific routing (requirement B): a deterministic keyword layer in
+    # app.services.safety can annotate/override these regardless of the LLM's
+    # own department pick, so lab/gastro/physio emails route more precisely
+    # than the generic buckets above.
+    laboratory = "laboratory"
+    gastroenterology = "gastroenterology"
+    physiotherapy = "physiotherapy"
 
 
 class EmailInput(BaseModel):

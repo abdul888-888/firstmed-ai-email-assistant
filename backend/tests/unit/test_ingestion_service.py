@@ -48,6 +48,48 @@ class FakeNotion:
         return {"blocks": [{"text": "Step one"}, {"text": "Step two"}]}
 
 
+class FakeNotionWithDatabase:
+    """Search returns a database object; query_database returns pricing rows."""
+
+    async def search(self, query=None, *, page_size=25):
+        return {
+            "results": [
+                {
+                    "id": "db-pricing",
+                    "object": "database",
+                    "title": "Service Pricing",
+                    "url": "https://notion.so/db-pricing",
+                    "last_edited_time": "2026-03-01",
+                }
+            ]
+        }
+
+    async def query_database(self, database_id, *, page_size=100):
+        assert database_id == "db-pricing"
+        return {
+            "results": [
+                {
+                    "id": "row-mri",
+                    "object": "page",
+                    "title": "MRI Scan",
+                    "url": "https://notion.so/row-mri",
+                    "last_edited_time": "2026-03-01",
+                    "properties": {"Service": "MRI Scan", "Self-Pay Price": "$650"},
+                    "content": "Service: MRI Scan\nSelf-Pay Price: $650",
+                },
+                {
+                    "id": "row-consult",
+                    "object": "page",
+                    "title": "Consultation",
+                    "url": "https://notion.so/row-consult",
+                    "last_edited_time": "2026-03-01",
+                    "properties": {"Service": "Consultation", "Self-Pay Price": "$120"},
+                    "content": "Service: Consultation\nSelf-Pay Price: $120",
+                },
+            ]
+        }
+
+
 async def _user(db_session) -> User:
     user = User(email="idx@firstmed.com", full_name="Idx")
     db_session.add(user)
@@ -78,6 +120,27 @@ async def test_ingest_notion_includes_block_text(db_session):
     assert doc.title == "Triage SOP"
     assert "Step one" in doc.content
     assert "Step two" in doc.content
+
+
+async def test_ingest_notion_expands_database_rows_with_prices(db_session):
+    # The core Bug-2 fix: a Notion database is expanded into per-row documents
+    # whose property values (prices) are captured — not just the database title.
+    svc = IngestionService(
+        db_session, gmail=FakeGmail(), notion=FakeNotionWithDatabase()
+    )
+    n = await svc.ingest_notion()
+    assert n == 2  # two rows, indexed individually
+
+    repo = DocumentRepository(db_session)
+    mri = await repo.get_by_source(DocumentSource.notion.value, "row-mri")
+    assert mri is not None
+    assert mri.title == "MRI Scan"
+    assert "$650" in mri.content  # the price is now retrievable content
+    assert mri.doc_metadata["object"] == "database_row"
+    assert mri.doc_metadata["database_title"] == "Service Pricing"
+
+    consult = await repo.get_by_source(DocumentSource.notion.value, "row-consult")
+    assert "$120" in consult.content
 
 
 async def test_ingest_is_idempotent(db_session):

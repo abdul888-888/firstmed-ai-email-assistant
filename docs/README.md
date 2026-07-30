@@ -17,3 +17,6 @@ Phase notes:
 - [`architecture/phase-5.md`](./architecture/phase-5.md) — AI triage + draft generation (Claude, human-in-the-loop).
 - [`architecture/phase-6.md`](./architecture/phase-6.md) — workflow intelligence engine + review-queue slice (persisted `DraftReview`, approve → Gmail draft).
 - [`architecture/phase-9.md`](./architecture/phase-9.md) — semantic retrieval (fastembed embeddings, hybrid lexical + semantic RRF).
+
+Security notes:
+- [`security/phi-encryption-and-anthropic-baa.md`](./security/phi-encryption-and-anthropic-baa.md) — PHI-at-rest encryption scope/key management, backfill, and the Anthropic BAA/DPA checklist.

@@ -23,6 +23,13 @@ class GoogleCredentialRepository:
         )
         return result.scalar_one_or_none()
 
+    async def list_connected_user_ids(self) -> list[uuid.UUID]:
+        """User IDs with a linked Google account — used to fan out the
+        periodic auto-pull task (see ``app.tasks.workflow_tasks``) to every
+        connected mailbox without a human needing to click Sync."""
+        result = await self.session.execute(select(GoogleCredential.user_id))
+        return list(result.scalars().all())
+
     async def upsert(
         self,
         *,
@@ -66,6 +73,13 @@ class GoogleCredentialRepository:
         """Persist a refreshed access token."""
         cred.access_token_enc = access_token_enc
         cred.token_expiry = token_expiry
+        await self.session.commit()
+        await self.session.refresh(cred)
+        return cred
+
+    async def update_history_id(self, cred: GoogleCredential, *, history_id: str) -> GoogleCredential:
+        """Persist the mailbox's current history cursor for incremental sync."""
+        cred.history_id = history_id
         await self.session.commit()
         await self.session.refresh(cred)
         return cred

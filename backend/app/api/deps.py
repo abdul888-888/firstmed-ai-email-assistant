@@ -31,18 +31,31 @@ async def get_current_user(
     session: AsyncSession = Depends(get_db),
 ) -> User:
     """Resolve the authenticated user from a bearer token."""
+    print(f"\n[AUTH DEBUG] Token received: {token[:50] if token else 'NONE'}...")
+
     try:
         payload = decode_access_token(token)
         subject = payload.get("sub")
+        print(f"[AUTH DEBUG] Token decoded. Subject (user ID): {subject}")
+
         if not subject:
+            print(f"[AUTH DEBUG] ERROR: No subject in token payload")
             raise _CREDENTIALS_EXC
+
         user_id = uuid.UUID(str(subject))
+        print(f"[AUTH DEBUG] Converted to UUID: {user_id}")
     except (jwt.PyJWTError, ValueError) as exc:
+        print(f"[AUTH DEBUG] ERROR: Token decode failed: {type(exc).__name__}: {exc}")
         raise _CREDENTIALS_EXC from exc
 
     user = await UserRepository(session).get_by_id(user_id)
+    print(f"[AUTH DEBUG] Database lookup: user={user.email if user else 'NOT FOUND'}, active={user.is_active if user else 'N/A'}")
+
     if user is None or not user.is_active:
+        print(f"[AUTH DEBUG] ERROR: User not found or inactive")
         raise _CREDENTIALS_EXC
+
+    print(f"[AUTH DEBUG] SUCCESS: Authenticated as {user.email}")
     return user
 
 

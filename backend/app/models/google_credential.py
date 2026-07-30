@@ -36,6 +36,12 @@ class GoogleCredential(Base, TimestampMixin):
     token_expiry: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Space-separated list of granted scopes.
     scopes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Gmail mailbox history cursor (users.history.list startHistoryId) for
+    # incremental sync — lets pull_gmail fetch only messages that changed
+    # since last time instead of re-listing the whole recent inbox. Null until
+    # the first successful pull bootstraps it; Gmail expires history after
+    # ~7 days, at which point a stale value is detected and re-bootstrapped.
+    history_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     def __repr__(self) -> str:  # pragma: no cover - debug helper
         return f"<GoogleCredential user_id={self.user_id} email={self.google_email!r}>"

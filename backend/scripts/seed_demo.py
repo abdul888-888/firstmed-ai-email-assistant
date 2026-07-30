@@ -15,7 +15,6 @@ from app.core.database import AsyncSessionLocal
 from app.models.document import DocumentSource
 from app.repositories.document import DocumentRepository
 from app.repositories.template import TemplateRepository
-from app.services.embedding_service import EmbeddingService
 
 # Notion-style knowledge base + one prior Gmail thread (so both source types cite).
 DOCS: list[dict] = [
@@ -93,6 +92,68 @@ DOCS: list[dict] = [
             "reference for post-operative escalation tone and next steps."
         ),
     },
+    # --- Pricing "database" rows -----------------------------------------
+    # These mimic what the fixed Notion database-row ingestion now produces:
+    # one document per service row, with typed properties flattened to text
+    # ("Service: X\nSelf-Pay Price: $Y..."). Swap the source_ids for real Notion
+    # row IDs once you connect a live pricing database.
+    {
+        "source": DocumentSource.notion.value,
+        "source_id": "price-row-consultation",
+        "title": "General Consultation",
+        "url": "https://www.notion.so/firstmed/Pricing",
+        "content": (
+            "General Consultation\n"
+            "Service: General Consultation\n"
+            "Self-Pay Price: $120\n"
+            "Duration: 30 minutes\n"
+            "Category: Primary Care\n"
+            "Notes: Covered by most insurance plans after copay."
+        ),
+    },
+    {
+        "source": DocumentSource.notion.value,
+        "source_id": "price-row-mri",
+        "title": "MRI Scan",
+        "url": "https://www.notion.so/firstmed/Pricing",
+        "content": (
+            "MRI Scan\n"
+            "Service: MRI Scan (single region)\n"
+            "Self-Pay Price: $650\n"
+            "Duration: 45 minutes\n"
+            "Category: Imaging\n"
+            "Notes: Prior authorization required for most insurers."
+        ),
+    },
+    {
+        "source": DocumentSource.notion.value,
+        "source_id": "price-row-bloodwork",
+        "title": "Standard Blood Panel",
+        "url": "https://www.notion.so/firstmed/Pricing",
+        "content": (
+            "Standard Blood Panel\n"
+            "Service: Standard Blood Panel (CBC + metabolic)\n"
+            "Self-Pay Price: $85\n"
+            "Category: Laboratory\n"
+            "Notes: Fasting required for accurate results."
+        ),
+    },
+    # --- Insurance "database" rows ---------------------------------------
+    {
+        "source": DocumentSource.notion.value,
+        "source_id": "insurance-accepted-plans",
+        "title": "Accepted Insurance Plans",
+        "url": "https://www.notion.so/firstmed/Insurance",
+        "content": (
+            "Accepted Insurance Plans\n"
+            "FirstMed accepts the following insurance plans: Aetna, Blue Cross "
+            "Blue Shield (PPO and HMO), Cigna, UnitedHealthcare, Humana, and "
+            "Medicare. We are out-of-network for Kaiser Permanente. "
+            "For Medicaid, only select managed-care plans are accepted — the "
+            "Front Office can confirm eligibility. Patients should bring their "
+            "insurance card to every visit. Copays are due at check-in."
+        ),
+    },
     {
         "source": "notion",
         "source_id": "sop_clinic_hours",
@@ -115,56 +176,76 @@ DOCS: list[dict] = [
    },
 ]
 
-
-# Canned-response templates staff can insert into a draft (Phase 7).
+# Approved canned-response templates (Phase 7). DraftService tries these FIRST
+# (see DraftService._match_template) — when one matches closely enough, its
+# wording is used verbatim (only the greeting is personalized) instead of free
+# LLM composition. Two of these deliberately overlap topics with docs above
+# (parking, clinic hours) so you can see the template win over the KB doc.
 TEMPLATES: list[dict] = [
     {
-        "key": "office_hours",
-        "title": "Clinic office hours",
+        "key": "parking-validation",
+        "title": "Parking Validation",
         "category": "front_office",
         "body": (
-            "Our clinic hours are Monday–Friday, 8:00 AM to 8:00 PM, and Saturday, "
-            "9:00 AM to 2:00 PM. We are closed on Sundays and major holidays."
+            "We validate parking for all scheduled visits. Please bring your "
+            "parking ticket to the front desk during check-in and our staff "
+            "will validate it for the garage. Street parking cannot be "
+            "validated."
         ),
     },
     {
-        "key": "parking_validation",
-        "title": "Parking & validation",
+        "key": "clinic-hours",
+        "title": "Clinic Hours",
         "category": "front_office",
         "body": (
-            "Parking is available in the attached garage. Please bring your parking "
-            "ticket to the front desk during your visit and our staff will validate it. "
-            "Street parking is not validated."
+            "Our clinic hours are Monday to Friday, 8:00 AM to 8:00 PM, and "
+            "Saturday, 9:00 AM to 2:00 PM (Urgent Care and pre-scheduled "
+            "appointments only). We are closed Sundays and major holidays. "
+            "For medical emergencies outside these hours, please call 911 or "
+            "go to the nearest emergency room."
         ),
     },
     {
-        "key": "booking_link",
-        "title": "Online booking link",
-        "category": "scheduling",
+        "key": "refill-acknowledgement",
+        "title": "Prescription Refill Acknowledgement",
+        "category": "general",
         "body": (
-            "You can schedule, reschedule, or cancel an appointment any time through "
-            "our patient portal: https://portal.firstmed.example/booking. If you'd "
-            "prefer, reply here with a few dates that work and we'll book it for you."
+            "Thank you for your prescription refill request. Our Nurse "
+            "Station reviews refill requests and sends approved refills to "
+            "your pharmacy within 48 hours. Please reply with your "
+            "medication name, dosage, and preferred pharmacy if you haven't "
+            "already, so we can process this promptly."
         ),
     },
     {
-        "key": "refill_ack",
-        "title": "Refill request acknowledgement",
-        "category": "clinical",
+        "key": "lab-preparation-fasting",
+        "title": "Lab Test Preparation (Fasting)",
+        "category": "general",
         "body": (
-            "Thank you for your refill request. Our Nurse Station will review it and "
-            "send the prescription to your pharmacy within 48 hours. To help us process "
-            "it, please confirm the medication name, dosage, and preferred pharmacy."
+            "For most standard blood panels, please fast (no food or drink "
+            "except water) for 8-12 hours before your appointment. You may "
+            "take routine medications with a small sip of water unless your "
+            "provider told you otherwise. Please arrive 10 minutes early and "
+            "bring a photo ID and your insurance card."
         ),
     },
+    # Physio requests are always ROUTE_TO_STAFF (see app/services/safety.py) —
+    # this template is NOT auto-drafted. It exists for staff to use manually
+    # via the /templates picker when replying to a routed physio-without-
+    # referral card, per the "informational template, not a booking attempt"
+    # requirement.
     {
-        "key": "billing_hours",
-        "title": "Billing office hours",
-        "category": "billing",
+        "key": "physio-referral-required",
+        "title": "Physiotherapy — Orthopaedic Referral Required",
+        "category": "general",
         "body": (
-            "Our billing office is available Monday–Friday, 9:00 AM to 5:00 PM. You can "
-            "pay by phone during those hours or any time through the patient portal. "
-            "For insurance questions, our front office team is happy to help."
+            "Thank you for reaching out about physiotherapy. Our policy "
+            "requires an orthopaedic consultation before starting "
+            "physiotherapy so your treatment plan can be tailored "
+            "appropriately. Please schedule an orthopaedic consult first; "
+            "once that provider clears you for physiotherapy, our "
+            "Physiotherapy team will contact you directly to book your "
+            "sessions."
         ),
     },
 ]
@@ -190,14 +271,9 @@ async def main() -> None:
                 key=t["key"], title=t["title"], category=t["category"], body=t["body"]
             )
 
-        # Phase 9: embed the seeded SOPs (no-op if the embedder is unavailable).
-        embeddings = EmbeddingService(session)
-        embedded = await embeddings.backfill()
-
     print(f"DB: {settings.sqlalchemy_database_uri}")
     print(f"Seeded {len(DOCS)} documents. Index counts by source: {counts}")
-    print(f"Embedded {embedded} documents ({'available' if embedded else 'lexical-only'}).")
-    print(f"Seeded {len(TEMPLATES)} canned-response templates.")
+    print(f"Seeded {len(TEMPLATES)} templates.")
 
 
 if __name__ == "__main__":

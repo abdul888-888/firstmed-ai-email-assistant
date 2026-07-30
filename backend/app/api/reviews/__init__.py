@@ -17,7 +17,7 @@ from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.core.logging import get_logger
 from app.models.user import User
-from app.repositories.draft_review import DraftReviewRepository
+from app.repositories.draft_review import DraftReviewRepository, StaleReviewStatusError
 from app.schemas.review import (
     DraftReviewRead,
     ReviewEdit,
@@ -36,6 +36,10 @@ _NOT_FOUND = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review
 _NOT_CONNECTED = HTTPException(
     status_code=status.HTTP_409_CONFLICT,
     detail="Google account is not connected.",
+)
+_STALE = HTTPException(
+    status_code=status.HTTP_409_CONFLICT,
+    detail="This review was already acted on by another request. Refresh and try again.",
 )
 
 
@@ -145,8 +149,17 @@ async def approve_review(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Cannot approve review in {review.status} status.",
         )
+    # Safety guard: an excluded/abstained review carries no AI draft. It must be
+    # handled manually, never pushed to Gmail — refuse to approve an empty draft.
+    if not review.draft_body.strip():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This email has no AI draft and must be handled manually.",
+        )
     try:
         updated = await WorkflowService(session).approve(current_user, review)
+    except StaleReviewStatusError as exc:
+        raise _STALE from exc
     except GmailNotConnectedError as exc:
         raise _NOT_CONNECTED from exc
     except GmailApiError as exc:
@@ -174,7 +187,10 @@ async def reject_review(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Cannot reject review in {review.status} status.",
         )
-    updated = await WorkflowService(session).reject(current_user, review, payload.reason)
+    try:
+        updated = await WorkflowService(session).reject(current_user, review, payload.reason)
+    except StaleReviewStatusError as exc:
+        raise _STALE from exc
     return DraftReviewRead.model_validate(updated)
 
 
@@ -215,6 +231,8 @@ async def send_review(
     _require_status(review, ReviewStatus.approved)
     try:
         updated = await WorkflowService(session).send(current_user, review)
+    except StaleReviewStatusError as exc:
+        raise _STALE from exc
     except GmailNotConnectedError as exc:
         raise _NOT_CONNECTED from exc
     except GmailApiError as exc:

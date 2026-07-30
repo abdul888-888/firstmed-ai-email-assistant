@@ -18,10 +18,21 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Index, String, Text, Uuid
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
+from app.models.types import EncryptedText
 from app.schemas.review import ReviewStatus
 
 
@@ -29,7 +40,15 @@ class DraftReview(Base, TimestampMixin):
     __tablename__ = "draft_reviews"
     __table_args__ = (
         Index("ix_draft_reviews_user_status", "user_id", "status"),
-        Index("ix_draft_reviews_gmail_message_id", "gmail_message_id"),
+        # Enforced at the DB level (not just app-level dedup) so two concurrent
+        # Gmail pulls — or a pull racing the direct single-message endpoint —
+        # can never insert two reviews for the same inbound email. The composite
+        # is (user_id, gmail_message_id) rather than a bare unique on
+        # gmail_message_id since the shared inbox may be viewed as "me" by more
+        # than one linked Google account.
+        UniqueConstraint(
+            "user_id", "gmail_message_id", name="uq_draft_reviews_user_gmail_message"
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -42,7 +61,8 @@ class DraftReview(Base, TimestampMixin):
     gmail_thread_id: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     message_id_header: Mapped[str] = mapped_column(Text, nullable=False, default="")
     sender: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    subject: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Encrypted at rest (PHI_ENCRYPTION_KEY) — the patient email's subject line.
+    subject: Mapped[str] = mapped_column(EncryptedText, nullable=False, default="")
 
     # --- triage + safety gate ---
     intent: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -50,11 +70,15 @@ class DraftReview(Base, TimestampMixin):
     department: Mapped[str] = mapped_column(String(32), nullable=False)
     classification: Mapped[str] = mapped_column(String(32), nullable=False)
     confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Encrypted at rest — the triage summary is a neutral paraphrase of the
+    # patient's email, so it's patient-identifying content too.
+    summary: Mapped[str] = mapped_column(EncryptedText, nullable=False, default="")
     reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     # --- draft ---
-    draft_body: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Encrypted at rest — the drafted reply body (the most sensitive field:
+    # built from the patient's email + clinic SOP context).
+    draft_body: Mapped[str] = mapped_column(EncryptedText, nullable=False, default="")
     citations: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
     model: Mapped[str] = mapped_column(String(64), nullable=False, default="")
 
@@ -72,7 +96,8 @@ class DraftReview(Base, TimestampMixin):
     # Reviewer note (e.g. reject reason).
     review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Specialist input for escalated reviews (awaiting_specialist_input status).
-    specialist_input: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Encrypted at rest — a clinician's free-text guidance on the patient's case.
+    specialist_input: Mapped[str | None] = mapped_column(EncryptedText, nullable=True)
     specialist_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     specialist_input_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Set once the approved draft is sent via Gmail.

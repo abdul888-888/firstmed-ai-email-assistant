@@ -21,26 +21,34 @@ export default function AuthCallbackPage() {
   const [status, setStatus] = useState<Status>({ kind: "working" });
 
   useEffect(() => {
-    const result = parseAuthFragment(window.location.hash);
+    try {
+      const result = parseAuthFragment(window.location.hash);
 
-    if (result === null) {
-      setStatus({ kind: "error", message: "No sign-in details were returned." });
-      return;
+      if (result === null) {
+        setStatus({ kind: "error", message: "No sign-in details were returned." });
+        return;
+      }
+      if (!result.ok) {
+        setStatus({ kind: "error", message: `Google sign-in failed: ${result.error}` });
+        return;
+      }
+
+      setToken(result.accessToken);
+      setStatus({ kind: "success" });
+
+      // Remove the token from the address bar, then continue to wherever the
+      // user started the sign-in from (defaults to home).
+      window.history.replaceState(null, "", window.location.pathname);
+      const dest = takeReturnTo();
+      const timer = window.setTimeout(() => router.replace(dest), 600);
+      return () => window.clearTimeout(timer);
+    } catch (error) {
+      console.error("Auth callback error:", error);
+      setStatus({
+        kind: "error",
+        message: `An error occurred: ${error instanceof Error ? error.message : "Unknown error"}`
+      });
     }
-    if (!result.ok) {
-      setStatus({ kind: "error", message: `Google sign-in failed: ${result.error}` });
-      return;
-    }
-
-    setToken(result.accessToken);
-    setStatus({ kind: "success" });
-
-    // Remove the token from the address bar, then continue to wherever the
-    // user started the sign-in from (defaults to home).
-    window.history.replaceState(null, "", window.location.pathname);
-    const dest = takeReturnTo();
-    const timer = window.setTimeout(() => router.replace(dest), 600);
-    return () => window.clearTimeout(timer);
   }, [router]);
 
   return (

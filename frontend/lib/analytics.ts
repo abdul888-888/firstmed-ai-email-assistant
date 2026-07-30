@@ -14,7 +14,9 @@ async function api(path: string, init?: RequestInit) {
     headers: { "Content-Type": "application/json", ...authHeader(), ...(init?.headers ?? {}) },
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.detail ?? `Request failed (${res.status})`);
+  // Always surface the status in the message so callers can detect 401 (the
+  // backend's 401 body is "Could not validate credentials", with no code).
+  if (!res.ok) throw new Error(`${data?.detail ?? "Request failed"} (${res.status})`);
   return data;
 }
 

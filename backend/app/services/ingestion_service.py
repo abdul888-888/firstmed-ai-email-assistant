@@ -59,13 +59,27 @@ class IngestionService:
         return count
 
     async def ingest_notion(self, *, query: str | None = None, page_size: int = 25) -> int:
-        """Index Notion pages the integration can see (databases: title only)."""
+        """Index Notion content the integration can see.
+
+        Pages are indexed as title + block text. **Databases are expanded into
+        their rows** — each row's typed properties (price, insurer, service, …)
+        are flattened to text and indexed as its own document, so tabular
+        knowledge like pricing/insurance tables becomes retrievable. Previously
+        databases were indexed by title only, which is why pricing/insurance
+        lookups returned nothing.
+        """
         results = await self.notion.search(query, page_size=page_size)
         count = 0
         for item in results.get("results", []):
+            obj = item.get("object", "")
             title = item.get("title") or "(untitled)"
+
+            if obj == "database":
+                count += await self._ingest_database(item)
+                continue
+
             content = title
-            if item.get("object") == "page":
+            if obj == "page":
                 page_content = await self.notion.get_page_content(item["id"])
                 block_text = "\n".join(
                     b["text"] for b in page_content.get("blocks", []) if b.get("text")
@@ -78,12 +92,40 @@ class IngestionService:
                 content=content,
                 url=item.get("url"),
                 doc_metadata={
-                    "object": item.get("object", ""),
+                    "object": obj,
                     "last_edited_time": item.get("last_edited_time", ""),
                 },
             )
             count += 1
         logger.info("ingest.notion", indexed=count)
+        return count
+
+    async def _ingest_database(self, db_item: dict) -> int:
+        """Index every row of a Notion database as an individual document."""
+        db_title = db_item.get("title") or "(untitled database)"
+        rows = await self.notion.query_database(db_item["id"])
+        count = 0
+        for row in rows.get("results", []):
+            row_title = row.get("title") or db_title
+            row_content = row.get("content", "")
+            # Prefix the row title + parent database so a lexical/semantic query
+            # like "how much is an MRI" matches the service name and its table.
+            content = f"{row_title}\n{row_content}".strip() or row_title
+            await self.repo.upsert(
+                source=DocumentSource.notion.value,
+                source_id=row["id"],
+                title=row_title,
+                content=content,
+                url=row.get("url") or db_item.get("url"),
+                doc_metadata={
+                    "object": "database_row",
+                    "database_id": db_item.get("id", ""),
+                    "database_title": db_title,
+                    "properties": row.get("properties", {}),
+                    "last_edited_time": row.get("last_edited_time", ""),
+                },
+            )
+            count += 1
         return count
 
     async def reindex(self, user: User) -> dict:

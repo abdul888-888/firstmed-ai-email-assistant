@@ -21,13 +21,20 @@ class NotionConnection(BaseModel):
 
 
 class NotionItem(BaseModel):
-    """A simplified page or database from a search / query result."""
+    """A simplified page or database from a search / query result.
+
+    ``properties`` / ``content`` are populated for database *rows* (from
+    ``query_database``): a readable name→value map and a flattened text block of
+    the row's fields, so pricing/insurance tables become retrievable content.
+    """
 
     id: str
     object: str = ""
     title: str = ""
     url: str = ""
     last_edited_time: str = ""
+    properties: dict[str, str] = Field(default_factory=dict)
+    content: str = ""
 
 
 class NotionSearchResults(BaseModel):
