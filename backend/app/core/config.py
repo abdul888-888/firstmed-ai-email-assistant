@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     secret_key: SecretStr = SecretStr("change-me-in-production")
     access_token_expire_minutes: int = 60
     algorithm: str = "HS256"
-    backend_cors_origins: list[str] = ["http://localhost:3000"]
+    backend_cors_origins: list[str] | str = ["http://localhost:3000"]
     # Fernet key (urlsafe base64, 32 bytes) for encrypting stored OAuth tokens.
     # Empty => a deterministic key is derived from ``secret_key`` (dev only).
     token_encryption_key: SecretStr = SecretStr("")
@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     # Shared clinical inbox address; empty => operate on the signed-in mailbox ("me").
     gmail_shared_inbox: str = ""
     # Scopes requested at consent: OIDC identity + read Gmail + create/send drafts.
-    google_oauth_scopes: list[str] = [
+    google_oauth_scopes: list[str] | str = [
         "openid",
         "email",
         "profile",
@@ -129,12 +129,25 @@ class Settings(BaseSettings):
 
     @field_validator("backend_cors_origins", "google_oauth_scopes", mode="before")
     @classmethod
-    def _split_csv(cls, value: object) -> object:
-        """Allow a comma- (or space-) separated string from the environment."""
+    def _split_csv(cls, value: object) -> list[str]:
+        """Allow a comma-, space-separated, plain URL, or JSON string from the environment."""
         if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                return []
+            if value.startswith("[") and value.endswith("]"):
+                import json
+                try:
+                    res = json.loads(value)
+                    if isinstance(res, list):
+                        return [str(x) for x in res]
+                except Exception:
+                    pass
             parts = value.replace(",", " ").split()
             return [item for item in (p.strip() for p in parts) if item]
-        return value
+        if isinstance(value, list):
+            return [str(x) for x in value]
+        return []
 
     @computed_field  # type: ignore[prop-decorator]
     @property
