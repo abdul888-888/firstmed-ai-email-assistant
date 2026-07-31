@@ -237,7 +237,7 @@ class Settings(BaseSettings):
                 "PHI_ENCRYPTION_KEY must be set explicitly (no derived dev fallback) — "
                 "protects patient data at rest"
             )
-        if self.postgres_password.get_secret_value().strip().lower() in _INSECURE_DB_PASSWORDS:
+        if not self.database_url and self.postgres_password.get_secret_value().strip().lower() in _INSECURE_DB_PASSWORDS:
             problems.append("POSTGRES_PASSWORD must not use a development default")
         if self.ai_configured and not self.anthropic_baa_signed:
             problems.append(
