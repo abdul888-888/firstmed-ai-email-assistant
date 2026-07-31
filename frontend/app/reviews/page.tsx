@@ -1,574 +1,238 @@
 "use client";
 
-// Force Vercel rebuild - ensure DashboardLayout is rendered
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
+  Archive,
+  Check,
   CheckCircle2,
-  Clock,
+  ChevronDown,
+  Clock3,
   FileText,
+  Inbox,
   Loader2,
   Mail,
   MessageSquare,
+  PanelLeftClose,
+  RefreshCw,
   Send,
   ShieldAlert,
   ShieldCheck,
-  User,
-  XCircle,
-  RefreshCw,
+  Sparkles,
   Stethoscope,
-  Filter,
-  ChevronRight,
-  CheckCheck,
-  MoreHorizontal,
-  Eye,
-  Edit3,
-  Trash2,
+  UserRound,
+  Users,
+  X,
 } from "lucide-react";
 
+import { DashboardLayout } from "@/components/dashboard-layout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
-import { DashboardLayout } from "@/components/dashboard-layout";
-import { API_BASE_URL } from "@/lib/api";
-import { authHeader, getToken, startGoogleSignIn } from "@/lib/auth";
+import {
+  ApiError,
+  approveReview,
+  editDraft,
+  getReview,
+  listReviews,
+  rejectReview,
+  sendReview,
+  submitSpecialistInput,
+  type Review,
+  type ReviewStatus,
+} from "@/lib/api";
+import {
+  addReviewNote,
+  assignReview,
+  listReviewNotes,
+  listTeamMembers,
+  type ReviewNote,
+  type TeamMember,
+} from "@/lib/admin";
+import { getToken, startGoogleSignIn } from "@/lib/auth";
+import { useGmailSync } from "@/lib/use-gmail-sync";
 import { cn } from "@/lib/utils";
 
-type Citation = { document_id: string; source: string; title: string; url: string | null };
+const QUEUES: Array<{
+  id: ReviewStatus;
+  label: string;
+  helper: string;
+  icon: typeof Inbox;
+  tone: string;
+}> = [
+  { id: "pending", label: "Ready for review", helper: "AI drafts ready for a staff decision", icon: Inbox, tone: "text-blue-600 bg-blue-50" },
+  { id: "awaiting_specialist_input", label: "Needs clinical input", helper: "Escalated emails awaiting a clinician", icon: Stethoscope, tone: "text-amber-700 bg-amber-50" },
+  { id: "specialist_input_received", label: "Ready after input", helper: "Specialist guidance has been received", icon: MessageSquare, tone: "text-violet-700 bg-violet-50" },
+  { id: "needs_manual_handling", label: "Manual handling", helper: "No AI draft — staff must respond directly", icon: ShieldAlert, tone: "text-orange-700 bg-orange-50" },
+  { id: "approved", label: "Draft saved in Gmail", helper: "Approved drafts awaiting a final send", icon: CheckCircle2, tone: "text-emerald-700 bg-emerald-50" },
+  { id: "sent", label: "Sent", helper: "Completed emails", icon: Send, tone: "text-slate-600 bg-slate-100" },
+  { id: "rejected", label: "Rejected", helper: "Drafts not used", icon: X, tone: "text-rose-700 bg-rose-50" },
+  { id: "irrelevant", label: "No action", helper: "Noise or irrelevant messages", icon: Archive, tone: "text-slate-600 bg-slate-100" },
+];
 
-type Review = {
-  id: string;
-  sender: string;
-  subject: string;
-  intent: string;
-  urgency: string;
-  department: string;
-  classification: "ADMIN_DIRECT_REPLY" | "NEEDS_PHYSICIAN_REVIEW" | "IRRELEVANT";
-  confidence: number;
-  reason: string;
-  summary: string;
-  draft_body: string;
-  citations: Citation[];
-  status: "pending" | "awaiting_specialist_input" | "specialist_input_received" | "approved" | "rejected" | "sent" | "irrelevant";
-  gmail_draft_id: string | null;
-  assigned_to: string | null;
-  specialist_input: string | null;
-  specialist_id: string | null;
-  specialist_input_at: string | null;
-  created_at: string;
+const DEPARTMENTS: Record<string, string> = {
+  front_office: "Front office",
+  nurse: "Nursing",
+  specialist: "Specialist",
+  laboratory: "Laboratory",
+  gastroenterology: "Gastroenterology",
+  physiotherapy: "Physiotherapy",
 };
 
-const base = `${API_BASE_URL}/api/v1/reviews`;
-
-class ApiError extends Error {
-  constructor(message: string, readonly status: number) {
-    super(message);
-  }
+function label(value: string) {
+  return DEPARTMENTS[value] ?? value.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-async function api(path: string, init?: RequestInit) {
-  const res = await fetch(`${base}${path}`, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...authHeader(), ...(init?.headers ?? {}) },
-  });
-  if (res.status === 401) {
-    throw new ApiError("Unauthorized", 401);
-  }
-  const body = await res.json();
-  if (!res.ok) {
-    throw new ApiError(body.detail ?? `HTTP ${res.status}`, res.status);
-  }
-  return body;
+function formatTime(value: string) {
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(value));
 }
 
-async function listReviews(status?: string) {
-  const query = status ? `?status=${status}` : "";
-  return api(`${query}`);
-}
-
-async function approveReview(review: Review) {
-  return api(`/${review.id}/approve`, { method: "POST" });
-}
-
-async function rejectReview(review: Review, reason: string) {
-  return api(`/${review.id}/reject`, {
-    method: "POST",
-    body: JSON.stringify({ reason }),
-  });
-}
-
-async function sendReview(review: Review) {
-  return api(`/${review.id}/send`, { method: "POST" });
-}
-
-async function editDraft(review: Review, draft_body: string) {
-  return api(`/${review.id}`, {
-    method: "PATCH",
-    body: JSON.stringify({ draft_body }),
-  });
-}
-
-async function submitSpecialistInput(review: Review, specialist_input: string, should_revise: boolean) {
-  return api(`/${review.id}/specialist-input`, {
-    method: "POST",
-    body: JSON.stringify({ specialist_input, should_revise_draft: should_revise }),
-  });
-}
-
-const statusConfig = {
-  pending: { color: "bg-blue-100", text: "text-blue-800", icon: Clock, label: "Pending" },
-  awaiting_specialist_input: { color: "bg-yellow-100", text: "text-yellow-800", icon: Stethoscope, label: "Awaiting Specialist" },
-  specialist_input_received: { color: "bg-purple-100", text: "text-purple-800", icon: MessageSquare, label: "Specialist Input Received" },
-  approved: { color: "bg-green-100", text: "text-green-800", icon: CheckCircle2, label: "Approved" },
-  rejected: { color: "bg-red-100", text: "text-red-800", icon: XCircle, label: "Rejected" },
-  sent: { color: "bg-gray-100", text: "text-gray-800", icon: Send, label: "Sent" },
-  irrelevant: { color: "bg-slate-100", text: "text-slate-800", icon: FileText, label: "Irrelevant" },
-};
-
-const classificationConfig = {
-  ADMIN_DIRECT_REPLY: { icon: ShieldCheck, label: "Admin Reply", color: "text-blue-600" },
-  NEEDS_PHYSICIAN_REVIEW: { icon: ShieldAlert, label: "Needs Physician Review", color: "text-orange-600" },
-  IRRELEVANT: { icon: AlertTriangle, label: "Irrelevant", color: "text-gray-600" },
-};
-
-const departmentConfig = {
-  front_office: { label: "Front Office", color: "bg-blue-50" },
-  nurse: { label: "Nurse", color: "bg-green-50" },
-  specialist: { label: "Specialist", color: "bg-purple-50" },
-};
-
-function ReviewCard({ review, onAction }: { review: Review; onAction: (type: string, review: Review, data?: any) => void }) {
-  const status = statusConfig[review.status as keyof typeof statusConfig];
-  const classification = classificationConfig[review.classification as keyof typeof classificationConfig];
-  const department = departmentConfig[review.department as keyof typeof departmentConfig];
-  const StatusIcon = status?.icon || Clock;
-  const ClassIcon = classification?.icon || FileText;
-
-  return (
-    <Card className="hover:shadow-lg transition-shadow">
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between">
-          <div className="flex-1">
-            <div className="flex items-center gap-2 mb-2">
-              <Badge className={cn(status?.color, status?.text)}>
-                <StatusIcon className="w-3 h-3 mr-1" />
-                {status?.label}
-              </Badge>
-              <Badge variant="outline" className={cn(department?.color)}>
-                {department?.label}
-              </Badge>
-            </div>
-            <p className="font-semibold text-lg text-gray-900 line-clamp-2">{review.subject || "(no subject)"}</p>
-            <p className="text-sm text-gray-600 mt-1">From: {review.sender}</p>
-          </div>
-        </div>
-      </CardHeader>
-
-      <CardContent className="space-y-4">
-        <div className="grid grid-cols-2 gap-3 text-sm">
-          <div>
-            <span className="text-gray-500">Intent:</span>
-            <p className="font-medium">{review.intent}</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Urgency:</span>
-            <p className="font-medium">{review.urgency}</p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <ClassIcon className={cn("w-4 h-4", classification?.color)} />
-          <span className="text-sm">{classification?.label}</span>
-          <span className="text-sm text-gray-500">• {(review.confidence * 100).toFixed(0)}% confident</span>
-        </div>
-
-        <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded">{review.summary}</p>
-
-        {review.status !== "irrelevant" && (
-          <>
-            {review.draft_body && (
-              <div className="border-t pt-3">
-                <p className="text-sm font-medium text-gray-900 mb-2">Draft Reply:</p>
-                <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded line-clamp-3">{review.draft_body}</p>
-              </div>
-            )}
-
-            {review.specialist_input && (
-              <div className="border-t pt-3 bg-purple-50 p-3 rounded">
-                <p className="text-sm font-medium text-purple-900 mb-2">Specialist Input:</p>
-                <p className="text-sm text-purple-800">{review.specialist_input}</p>
-              </div>
-            )}
-          </>
-        )}
-
-        {review.citations.length > 0 && (
-          <div className="border-t pt-3">
-            <p className="text-xs font-medium text-gray-600 mb-2">Sources:</p>
-            <div className="space-y-1">
-              {review.citations.map((c) => (
-                <a
-                  key={c.document_id}
-                  href={c.url || "#"}
-                  className="text-xs text-blue-600 hover:underline block"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  {c.source}: {c.title}
-                </a>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="border-t pt-4">
-          <ActionButtons review={review} onAction={onAction} />
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function ActionButtons({ review, onAction }: { review: Review; onAction: (type: string, review: Review, data?: any) => void }) {
-  if (review.status === "irrelevant") {
-    return (
-      <div className="flex gap-2">
-        <Button variant="outline" size="sm" className="w-full" disabled>
-          This email was marked as irrelevant
-        </Button>
-      </div>
-    );
-  }
-
-  if (review.status === "awaiting_specialist_input") {
-    return (
-      <div className="space-y-2">
-        <p className="text-xs text-gray-600 font-medium">Awaiting specialist input...</p>
-        <Button
-          size="sm"
-          className="w-full bg-purple-600 hover:bg-purple-700"
-          onClick={() => onAction("specialist_input", review)}
-        >
-          <MessageSquare className="w-4 h-4 mr-2" />
-          Provide Input
-        </Button>
-      </div>
-    );
-  }
-
-  if (review.status === "specialist_input_received") {
-    return (
-      <div className="space-y-2">
-        <Button size="sm" variant="outline" className="w-full" onClick={() => onAction("edit", review)}>
-          <Edit3 className="w-4 h-4 mr-2" />
-          Review & Edit Draft
-        </Button>
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            className="flex-1"
-            onClick={() => onAction("approve", review)}
-          >
-            <CheckCircle2 className="w-4 h-4 mr-1" />
-            Approve
-          </Button>
-          <Button size="sm" variant="destructive" className="flex-1" onClick={() => onAction("reject", review)}>
-            <XCircle className="w-4 h-4 mr-1" />
-            Reject
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  if (review.status === "approved" && !review.gmail_draft_id) {
-    return (
-      <Button size="sm" className="w-full" onClick={() => onAction("send", review)}>
-        <Send className="w-4 h-4 mr-2" />
-        Send Email
-      </Button>
-    );
-  }
-
-  if (review.status === "approved" || review.status === "pending") {
-    return (
-      <div className="flex gap-2">
-        <Button
-          size="sm"
-          variant="outline"
-          className="flex-1"
-          onClick={() => onAction("edit", review)}
-        >
-          <Edit3 className="w-4 h-4 mr-1" />
-          Edit
-        </Button>
-        <Button
-          size="sm"
-          className="flex-1"
-          onClick={() => onAction("approve", review)}
-        >
-          <CheckCircle2 className="w-4 h-4 mr-1" />
-          Approve
-        </Button>
-        <Button size="sm" variant="destructive" className="flex-1" onClick={() => onAction("reject", review)}>
-          <XCircle className="w-4 h-4 mr-1" />
-          Reject
-        </Button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="text-xs text-gray-500">
-      {review.status === "sent" && "Email sent ✓"}
-      {review.status === "rejected" && "Email rejected"}
-    </div>
-  );
+function classification(review: Review) {
+  if (review.classification === "ADMIN_DIRECT_REPLY") return { label: "Draft eligible", tone: "text-blue-700 bg-blue-50 border-blue-200", icon: Sparkles };
+  if (review.classification === "ROUTE_TO_STAFF") return { label: "Staff handling", tone: "text-orange-700 bg-orange-50 border-orange-200", icon: ShieldAlert };
+  if (review.classification === "NEEDS_PHYSICIAN_REVIEW") return { label: "Clinical review", tone: "text-violet-700 bg-violet-50 border-violet-200", icon: Stethoscope };
+  return { label: "No action", tone: "text-slate-700 bg-slate-100 border-slate-200", icon: FileText };
 }
 
 export default function ReviewsPage() {
-  const [reviews, setReviews] = useState<Review[]>([]);
+  const [activeQueue, setActiveQueue] = useState<ReviewStatus>("pending");
+  const [queues, setQueues] = useState<Record<string, Review[]>>({});
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Review | null>(null);
+  const selectedIdRef = useRef<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedStatus, setSelectedStatus] = useState<string | null>(null);
-  const [editingReview, setEditingReview] = useState<Review | null>(null);
-  const [editingDraft, setEditingDraft] = useState<string>("");
-  const [rejectReason, setRejectReason] = useState("");
-  const [specialistInput, setSpecialistInput] = useState("");
-  const [actionInProgress, setActionInProgress] = useState(false);
+  const [mobilePanel, setMobilePanel] = useState<"queues" | "list" | "detail">("list");
 
-  const loadReviews = useCallback(async () => {
+  const load = useCallback(async () => {
+    if (!getToken()) {
+      await startGoogleSignIn("/reviews");
+      return;
+    }
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
-      setError(null);
-      const data = await listReviews(selectedStatus || undefined);
-      setReviews(Array.isArray(data) ? data : data.reviews || []);
+      const responses = await Promise.all(QUEUES.map(async (queue) => [queue.id, await listReviews(queue.id, 200)] as const));
+      const next = Object.fromEntries(responses.map(([id, result]) => [id, result.reviews]));
+      setQueues(next);
+      const visible = next[activeQueue] ?? [];
+      const currentId = selectedIdRef.current;
+      const nextId = currentId && visible.some((review) => review.id === currentId) ? currentId : visible[0]?.id ?? null;
+      selectedIdRef.current = nextId;
+      setSelectedId(nextId);
+      setSelected(nextId ? visible.find((review) => review.id === nextId) ?? null : null);
     } catch (err) {
-      if (err instanceof ApiError) {
-        if (err.status === 401) {
-          await startGoogleSignIn();
-          return;
-        }
-        setError(err.message);
+      if (err instanceof ApiError && err.isUnauthorized) {
+        await startGoogleSignIn("/reviews");
       } else {
-        setError("Failed to load reviews");
+        setError(err instanceof Error ? err.message : "Could not load the review workspace.");
       }
     } finally {
       setLoading(false);
     }
-  }, [selectedStatus]);
+  }, [activeQueue]);
 
-  useEffect(() => {
-    loadReviews();
-  }, [loadReviews]);
+  useEffect(() => { void load(); }, [load]);
 
-  const handleAction = async (type: string, review: Review, data?: any) => {
-    setActionInProgress(true);
-    try {
-      let result;
-      switch (type) {
-        case "approve":
-          result = await approveReview(review);
-          break;
-        case "reject":
-          result = await rejectReview(review, rejectReason || "No reason provided");
-          setRejectReason("");
-          break;
-        case "send":
-          result = await sendReview(review);
-          break;
-        case "edit":
-          setEditingReview(review);
-          setEditingDraft(review.draft_body);
-          return;
-        case "specialist_input":
-          setEditingReview(review);
-          setSpecialistInput("");
-          return;
-        case "save_draft":
-          result = await editDraft(review, editingDraft);
-          setEditingReview(null);
-          break;
-        case "submit_specialist_input":
-          result = await submitSpecialistInput(review, specialistInput, true);
-          setEditingReview(null);
-          setSpecialistInput("");
-          break;
-        default:
-          return;
-      }
-      await loadReviews();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Action failed");
-    } finally {
-      setActionInProgress(false);
-    }
+  const sync = useGmailSync({
+    onComplete: () => void load(),
+    onUnauthorized: () => void startGoogleSignIn("/reviews"),
+  });
+  const reviews = queues[activeQueue] ?? [];
+
+  const select = async (id: string) => {
+    selectedIdRef.current = id;
+    setSelectedId(id);
+    setMobilePanel("detail");
+    try { setSelected(await getReview(id)); }
+    catch (err) { setError(err instanceof Error ? err.message : "Could not open this email."); }
   };
 
-  const statuses = Object.entries(statusConfig).map(([key, val]) => ({
-    key,
-    label: val.label,
-  }));
-
-  const filteredReviews = selectedStatus
-    ? reviews.filter((r) => r.status === selectedStatus)
-    : reviews;
+  const changeQueue = (queue: ReviewStatus) => {
+    setActiveQueue(queue);
+    setMobilePanel("list");
+  };
 
   return (
     <DashboardLayout>
-      <div className="space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">Email Reviews</h1>
-            <p className="text-gray-600 mt-1">Manage and respond to patient emails</p>
-          </div>
-          <Button onClick={loadReviews} disabled={loading} variant="outline">
-            <RefreshCw className={cn("w-4 h-4 mr-2", loading && "animate-spin")} />
-            Refresh
-          </Button>
-        </div>
-
-        {/* Status Filter */}
-        <div className="flex gap-2 flex-wrap">
-          <Button
-            variant={selectedStatus === null ? "default" : "outline"}
-            size="sm"
-            onClick={() => setSelectedStatus(null)}
-          >
-            <Filter className="w-4 h-4 mr-2" />
-            All ({reviews.length})
-          </Button>
-          {statuses.map((s) => {
-            const count = reviews.filter((r) => r.status === s.key).length;
-            return (
-              <Button
-                key={s.key}
-                variant={selectedStatus === s.key ? "default" : "outline"}
-                size="sm"
-                onClick={() => setSelectedStatus(s.key)}
-              >
-                {s.label} ({count})
+      <div className="min-h-screen bg-slate-50 text-slate-900">
+        <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur md:px-7">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Shared inbox</p>
+              <h1 className="text-xl font-bold tracking-tight">Review workspace</h1>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading} className="hidden sm:inline-flex">
+                <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} /> Refresh
               </Button>
-            );
-          })}
-        </div>
-
-        {/* Error Message */}
-        {error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-800">
-            {error}
+              <Button size="sm" onClick={() => void sync.sync()} disabled={sync.disabled} className="bg-emerald-600 hover:bg-emerald-700">
+                {sync.syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                {sync.syncing ? "Syncing inbox" : "Sync inbox"}
+              </Button>
+            </div>
           </div>
-        )}
+          {(sync.error || error) && <p className="mt-2 rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">{sync.error ?? error}</p>}
+          {sync.lastResult && <p className="mt-2 text-xs text-slate-500">Last sync {sync.lastSyncedLabel}: {sync.lastResult.created ?? 0} added, {sync.lastResult.skipped ?? 0} already handled.</p>}
+        </header>
 
-        {/* Edit Modal */}
-        {editingReview && editingReview.status !== "awaiting_specialist_input" && (
-          <Card className="border-2 border-blue-500">
-            <CardHeader>
-              <CardTitle>Edit Draft Reply</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <label className="text-sm font-medium text-gray-700">Draft Body</label>
-                <Textarea
-                  value={editingDraft}
-                  onChange={(e) => setEditingDraft(e.target.value)}
-                  className="mt-2 font-mono text-sm"
-                  rows={8}
-                />
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  onClick={() => handleAction("save_draft", editingReview)}
-                  disabled={actionInProgress}
-                >
-                  <CheckCheck className="w-4 h-4 mr-2" />
-                  Save Draft
-                </Button>
-                <Button variant="outline" onClick={() => setEditingReview(null)}>
-                  Cancel
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Specialist Input Modal */}
-        {editingReview && editingReview.status === "awaiting_specialist_input" && (
-          <Card className="border-2 border-purple-500">
-            <CardHeader>
-              <CardTitle>Provide Specialist Input</CardTitle>
-              <p className="text-sm text-gray-600 mt-2">
-                Email from {editingReview.sender} requires your clinical input.
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <p className="font-medium mb-2">Original Email:</p>
-                <p className="text-sm bg-gray-50 p-3 rounded">{editingReview.subject}</p>
-              </div>
-              {editingReview.draft_body && (
-                <div>
-                  <p className="font-medium mb-2">Current Draft:</p>
-                  <p className="text-sm bg-gray-50 p-3 rounded">{editingReview.draft_body}</p>
-                </div>
-              )}
-              <div>
-                <label className="text-sm font-medium text-gray-700">Your Clinical Input</label>
-                <Textarea
-                  placeholder="Provide your specialist guidance, recommendations, or changes needed..."
-                  value={specialistInput}
-                  onChange={(e) => setSpecialistInput(e.target.value)}
-                  className="mt-2"
-                  rows={6}
-                />
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  onClick={() => handleAction("submit_specialist_input", editingReview)}
-                  disabled={actionInProgress || !specialistInput}
-                  className="bg-purple-600 hover:bg-purple-700"
-                >
-                  <Stethoscope className="w-4 h-4 mr-2" />
-                  Submit Input
-                </Button>
-                <Button variant="outline" onClick={() => setEditingReview(null)}>
-                  Cancel
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Reviews Grid */}
-        <div className="space-y-4">
-          {loading ? (
-            Array.from({ length: 3 }).map((_, i) => (
-              <Card key={i}>
-                <CardHeader>
-                  <Skeleton className="h-6 w-1/2" />
-                </CardHeader>
-                <CardContent>
-                  <Skeleton className="h-20" />
-                </CardContent>
-              </Card>
-            ))
-          ) : filteredReviews.length === 0 ? (
-            <Card>
-              <CardContent className="py-12 text-center">
-                <Mail className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                <p className="text-gray-600">No reviews found</p>
-              </CardContent>
-            </Card>
-          ) : (
-            filteredReviews.map((review) => (
-              <ReviewCard key={review.id} review={review} onAction={handleAction} />
-            ))
-          )}
-        </div>
+        <main className="grid min-h-[calc(100vh-93px)] grid-cols-1 lg:grid-cols-[250px_330px_minmax(0,1fr)]">
+          <QueueNav queues={queues} active={activeQueue} onChange={changeQueue} mobilePanel={mobilePanel} />
+          <ReviewList reviews={reviews} selectedId={selectedId} activeQueue={activeQueue} loading={loading} onSelect={select} mobilePanel={mobilePanel} />
+          <ReviewDetail review={selected} onRefresh={load} onSelectQueue={changeQueue} mobilePanel={mobilePanel} onBack={() => setMobilePanel("list")} />
+        </main>
       </div>
     </DashboardLayout>
   );
 }
+
+function QueueNav({ queues, active, onChange, mobilePanel }: { queues: Record<string, Review[]>; active: ReviewStatus; onChange: (id: ReviewStatus) => void; mobilePanel: string }) {
+  return <aside className={cn("border-r border-slate-200 bg-white p-3 lg:block", mobilePanel === "queues" ? "block" : "hidden")}>
+    <div className="mb-3 px-2"><p className="text-sm font-semibold">Queues</p><p className="text-xs text-slate-500">Organised by safe next step</p></div>
+    <nav className="space-y-1">
+      {QUEUES.map((queue) => {
+        const Icon = queue.icon; const count = queues[queue.id]?.length ?? 0;
+        return <button key={queue.id} onClick={() => onChange(queue.id)} className={cn("flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition", active === queue.id ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100")}>
+          <span className={cn("grid h-8 w-8 place-items-center rounded-md", active === queue.id ? "bg-white/15 text-white" : queue.tone)}><Icon className="h-4 w-4" /></span>
+          <span className="min-w-0 flex-1"><span className="block text-sm font-medium">{queue.label}</span></span>
+          <span className={cn("min-w-5 rounded-full px-1.5 py-0.5 text-center text-xs font-bold", active === queue.id ? "bg-white/15" : "bg-slate-100 text-slate-500")}>{count}</span>
+        </button>;
+      })}
+    </nav>
+  </aside>;
+}
+
+function ReviewList({ reviews, selectedId, activeQueue, loading, onSelect, mobilePanel }: { reviews: Review[]; selectedId: string | null; activeQueue: ReviewStatus; loading: boolean; onSelect: (id: string) => void; mobilePanel: string }) {
+  const queue = QUEUES.find((item) => item.id === activeQueue)!;
+  return <section className={cn("border-r border-slate-200 bg-slate-50", mobilePanel === "list" ? "block" : "hidden lg:block")}>
+    <div className="border-b border-slate-200 bg-white px-5 py-4"><div className="flex items-center justify-between"><div><h2 className="font-semibold">{queue.label}</h2><p className="text-xs text-slate-500">{queue.helper}</p></div><Badge>{reviews.length}</Badge></div></div>
+    <div className="max-h-[calc(100vh-166px)] overflow-y-auto p-2">
+      {loading ? <div className="p-6 text-center text-sm text-slate-500"><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" />Loading inbox…</div> : reviews.length === 0 ? <EmptyQueue /> : reviews.map((review) => <button key={review.id} onClick={() => onSelect(review.id)} className={cn("mb-1 w-full rounded-lg border p-3 text-left transition", selectedId === review.id ? "border-emerald-300 bg-emerald-50 shadow-sm" : "border-transparent bg-white hover:border-slate-200 hover:bg-slate-50")}><div className="mb-1.5 flex items-center justify-between gap-3"><span className="truncate text-sm font-semibold">{review.sender || "Unknown sender"}</span><span className="shrink-0 text-[11px] text-slate-400">{formatTime(review.created_at)}</span></div><p className="line-clamp-1 text-sm font-medium text-slate-800">{review.subject || "(No subject)"}</p><p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{review.summary || review.reason}</p><div className="mt-2 flex items-center gap-2"><span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600">{label(review.department)}</span>{review.urgency !== "normal" && <span className="text-[11px] font-medium text-orange-700">{review.urgency} priority</span>}</div></button>)}</div>
+  </section>;
+}
+
+function EmptyQueue() { return <div className="mx-3 mt-10 rounded-xl border border-dashed border-slate-300 bg-white p-7 text-center"><Inbox className="mx-auto mb-3 h-8 w-8 text-slate-300" /><p className="text-sm font-medium text-slate-700">Nothing here right now</p><p className="mt-1 text-xs leading-5 text-slate-500">Sync the inbox or choose another queue.</p></div>; }
+
+function ReviewDetail({ review, onRefresh, onSelectQueue, mobilePanel, onBack }: { review: Review | null; onRefresh: () => Promise<void>; onSelectQueue: (status: ReviewStatus) => void; mobilePanel: string; onBack: () => void }) {
+  const [editing, setEditing] = useState(false); const [draft, setDraft] = useState(""); const [specialistInput, setSpecialistInput] = useState(""); const [note, setNote] = useState(""); const [notes, setNotes] = useState<ReviewNote[]>([]); const [team, setTeam] = useState<TeamMember[]>([]); const [busy, setBusy] = useState(false); const [message, setMessage] = useState<string | null>(null);
+  useEffect(() => { if (!review) return; setDraft(review.draft_body); setSpecialistInput(""); setEditing(false); setMessage(null); void Promise.all([listReviewNotes(review.id), listTeamMembers()]).then(([nextNotes, nextTeam]) => { setNotes(nextNotes); setTeam(nextTeam); }).catch(() => {}); }, [review?.id]);
+  if (!review) return <section className={cn("grid place-items-center bg-white p-8", mobilePanel === "detail" ? "block" : "hidden lg:grid")}><div className="max-w-sm text-center"><div className="mx-auto grid h-12 w-12 place-items-center rounded-xl bg-emerald-50"><Mail className="h-6 w-6 text-emerald-600" /></div><h2 className="mt-4 font-semibold">Select an email to review</h2><p className="mt-1 text-sm leading-6 text-slate-500">Choose an item from a queue to see its decision, sources, collaboration history, and permitted actions.</p></div></section>;
+  const decision = classification(review); const DecisionIcon = decision.icon; const isManual = review.status === "needs_manual_handling"; const canEdit = review.status === "pending" || review.status === "specialist_input_received"; const canApprove = canEdit && Boolean(review.draft_body.trim());
+  const run = async (action: () => Promise<unknown>, success: string) => { setBusy(true); setMessage(null); try { await action(); setMessage(success); await onRefresh(); } catch (err) { setMessage(err instanceof Error ? err.message : "Action failed."); } finally { setBusy(false); } };
+  return <section className={cn("min-w-0 bg-white", mobilePanel === "detail" ? "block" : "hidden lg:block")}><div className="max-h-[calc(100vh-93px)] overflow-y-auto"><div className="border-b border-slate-200 px-5 py-4 md:px-7"><button onClick={onBack} className="mb-3 inline-flex items-center gap-1 text-xs font-medium text-slate-500 lg:hidden"><PanelLeftClose className="h-3.5 w-3.5" /> Back to inbox</button><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><div className="mb-2 flex flex-wrap gap-2"><Badge className={decision.tone}><DecisionIcon className="h-3.5 w-3.5" />{decision.label}</Badge><Badge className="bg-slate-100 text-slate-700">{label(review.department)}</Badge></div><h2 className="text-xl font-bold tracking-tight">{review.subject || "(No subject)"}</h2><p className="mt-1 text-sm text-slate-500">From <span className="font-medium text-slate-700">{review.sender || "Unknown sender"}</span> · received {formatTime(review.created_at)}</p></div><span className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">{Math.round(review.confidence * 100)}% confidence</span></div></div>
+    <div className="space-y-6 p-5 md:p-7">
+      {message && <p className="rounded-md bg-slate-100 px-3 py-2 text-sm text-slate-700">{message}</p>}
+      <div className="grid gap-4 xl:grid-cols-2"><Info label="AI triage" value={`${label(review.intent)} · ${review.urgency} priority`} /><Info label="Why this was routed" value={review.reason || "No reason was recorded."} /></div>
+      {isManual ? <Card className="border-orange-200 bg-orange-50"><CardContent className="flex gap-3 py-5"><ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-orange-600" /><div><p className="font-semibold text-orange-900">Manual response required</p><p className="mt-1 text-sm leading-6 text-orange-800">This email intentionally has no AI draft. Handle it through your clinic’s normal process; it cannot be approved from this workspace.</p></div></CardContent></Card> : review.status === "awaiting_specialist_input" ? <SpecialistForm value={specialistInput} onChange={setSpecialistInput} disabled={busy} onSubmit={() => run(() => submitSpecialistInput(review.id, specialistInput, true), "Clinical guidance saved and draft regenerated.")} /> : <DraftEditor value={editing ? draft : review.draft_body} editable={editing} onChange={setDraft} onEdit={() => setEditing(true)} onCancel={() => { setDraft(review.draft_body); setEditing(false); }} onSave={() => run(() => editDraft(review.id, draft), "Draft saved.").then(() => setEditing(false))} disabled={busy} />}
+      <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-5">{canApprove && <Button disabled={busy} onClick={() => run(() => approveReview(review.id), "Approved — a draft was saved to Gmail.")} className="bg-emerald-600 hover:bg-emerald-700"><Check className="h-4 w-4" />Approve to Gmail drafts</Button>}{canEdit && <Button variant="outline" disabled={busy} onClick={() => run(() => rejectReview(review.id, "Rejected by staff"), "Draft rejected.")}><X className="h-4 w-4" />Reject</Button>}{review.status === "approved" && <Button disabled={busy} onClick={() => run(() => sendReview(review.id), "Email sent.")} className="bg-slate-900 hover:bg-slate-800"><Send className="h-4 w-4" />Send email</Button>}</div>
+      <Sources citations={review.citations} />
+      <Collaboration review={review} team={team} notes={notes} note={note} setNote={setNote} busy={busy} onAssign={(user) => run(() => assignReview(review.id, user), "Assignment updated.")} onNote={() => run(async () => { const saved = await addReviewNote(review.id, note); setNotes((items) => [...items, saved]); setNote(""); }, "Note added.")} />
+    </div></div></section>;
+}
+
+function Info({ label: heading, value }: { label: string; value: string }) { return <div className="rounded-lg border border-slate-200 bg-slate-50 p-3"><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{heading}</p><p className="mt-1 text-sm leading-5 text-slate-700">{value}</p></div>; }
+function DraftEditor({ value, editable, onChange, onEdit, onCancel, onSave, disabled }: { value: string; editable: boolean; onChange: (value: string) => void; onEdit: () => void; onCancel: () => void; onSave: () => void; disabled: boolean }) { return <div><div className="mb-2 flex items-center justify-between"><div><h3 className="font-semibold">Proposed reply</h3><p className="text-xs text-slate-500">Review every message before approval.</p></div>{value && !editable && <Button variant="outline" size="sm" onClick={onEdit}>Edit draft</Button>}</div>{value ? editable ? <><Textarea value={value} onChange={(event) => onChange(event.target.value)} rows={12} className="min-h-[260px] leading-6" /><div className="mt-2 flex gap-2"><Button size="sm" disabled={disabled || !value.trim()} onClick={onSave}>Save changes</Button><Button size="sm" variant="outline" onClick={onCancel}>Cancel</Button></div></> : <div className="whitespace-pre-wrap rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-700">{value}</div> : <Card className="border-dashed"><CardContent className="py-8 text-center text-sm text-slate-500">No AI draft is available for this email.</CardContent></Card>}</div>; }
+function SpecialistForm({ value, onChange, onSubmit, disabled }: { value: string; onChange: (value: string) => void; onSubmit: () => void; disabled: boolean }) { return <Card className="border-violet-200 bg-violet-50/50"><CardContent className="py-5"><div className="flex gap-3"><Stethoscope className="mt-0.5 h-5 w-5 text-violet-700" /><div><h3 className="font-semibold text-violet-950">Clinical guidance needed</h3><p className="mt-1 text-sm leading-6 text-violet-800">Add specialist guidance. The assistant will only use that guidance to prepare a reviewable reply.</p></div></div><Textarea value={value} onChange={(event) => onChange(event.target.value)} placeholder="Provide the approved clinical guidance for this response…" rows={7} className="mt-4 min-h-[160px]" /><Button disabled={disabled || !value.trim()} onClick={onSubmit} className="mt-3 bg-violet-700 hover:bg-violet-800">{disabled && <Loader2 className="h-4 w-4 animate-spin" />}Submit guidance</Button></CardContent></Card>; }
+function Sources({ citations }: { citations: Review["citations"] }) { return <div><h3 className="mb-2 font-semibold">Grounding sources</h3>{citations.length ? <div className="flex flex-wrap gap-2">{citations.map((citation) => <a key={citation.document_id} href={citation.url ?? undefined} target="_blank" rel="noreferrer" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 hover:border-emerald-300 hover:text-emerald-700"><span className="font-semibold uppercase tracking-wide text-slate-400">{citation.source}</span> · {citation.title}</a>)}</div> : <p className="text-sm text-slate-500">No source was used because this item was escalated or requires manual handling.</p>}</div>; }
+function Collaboration({ review, team, notes, note, setNote, busy, onAssign, onNote }: { review: Review; team: TeamMember[]; notes: ReviewNote[]; note: string; setNote: (value: string) => void; busy: boolean; onAssign: (value: string | null) => void; onNote: () => void }) { return <div className="border-t border-slate-100 pt-6"><div className="mb-3 flex items-center gap-2"><Users className="h-4 w-4 text-slate-500" /><h3 className="font-semibold">Team coordination</h3></div><div className="grid gap-5 xl:grid-cols-2"><div><label className="text-xs font-medium text-slate-500">Assigned staff member</label><div className="relative mt-1"><select value={review.assigned_to ?? ""} onChange={(event) => onAssign(event.target.value || null)} disabled={busy} className="w-full appearance-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"><option value="">Unassigned</option>{team.map((member) => <option key={member.id} value={member.id}>{member.full_name || member.email} · {label(member.role)}</option>)}</select><ChevronDown className="pointer-events-none absolute right-3 top-2.5 h-4 w-4 text-slate-400" /></div></div><div><label className="text-xs font-medium text-slate-500">Internal note</label><div className="mt-1 flex gap-2"><input value={note} onChange={(event) => setNote(event.target.value)} placeholder="Add a hand-off note" className="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm" /><Button size="sm" disabled={busy || !note.trim()} onClick={onNote}>Add</Button></div></div></div>{notes.length > 0 && <div className="mt-4 space-y-2">{notes.map((item) => <div key={item.id} className="rounded-lg bg-slate-50 px-3 py-2 text-sm"><span className="font-medium text-slate-700">Team note</span><span className="ml-2 text-xs text-slate-400">{formatTime(item.created_at)}</span><p className="mt-1 text-slate-600">{item.body}</p></div>)}</div>}</div>; }
