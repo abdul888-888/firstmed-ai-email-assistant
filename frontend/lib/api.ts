@@ -15,8 +15,13 @@ import { authHeader, clearToken } from "@/lib/auth";
  * Backend API base URL. Injected at build/runtime via NEXT_PUBLIC_API_BASE_URL
  * (see .env.example). Falls back to the local backend port.
  */
-export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+const rawUrl =
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  process.env.NEXT_PUBLIC_API_URL ||
+  process.env.NEXT_PUBLIC_BACKEND_URL ||
+  "http://localhost:8000";
+
+export const API_BASE_URL = rawUrl.replace(/\/+$/, "");
 
 /** Versioned API prefix — every backend router lives under this. */
 export const API_V1 = `${API_BASE_URL}/api/v1`;
