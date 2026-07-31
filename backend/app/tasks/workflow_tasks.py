@@ -48,9 +48,17 @@ def _run_async(coro: Any) -> Any:
     Celery's prefork workers execute tasks as plain sync functions; the app's
     services (SQLAlchemy AsyncSession, httpx.AsyncClient) are async-only. Each
     task invocation gets its own fresh event loop via ``asyncio.run`` rather
-    than sharing one across tasks/threads.
+    than sharing one across tasks/threads. The database engine is disposed at
+    the end of the loop so connections are never leaked or reused across loops.
     """
-    return asyncio.run(coro)
+    async def _runner() -> Any:
+        from app.core.database import engine
+        try:
+            return await coro
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(_runner())
 
 
 SessionFactory = Callable[[], "AsyncSession"]
