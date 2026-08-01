@@ -65,10 +65,10 @@ class DraftReview(Base, TimestampMixin):
     subject: Mapped[str] = mapped_column(EncryptedText, nullable=False, default="")
 
     # --- triage + safety gate ---
-    intent: Mapped[str] = mapped_column(String(32), nullable=False)
-    urgency: Mapped[str] = mapped_column(String(32), nullable=False)
-    department: Mapped[str] = mapped_column(String(32), nullable=False)
-    classification: Mapped[str] = mapped_column(String(32), nullable=False)
+    intent: Mapped[str] = mapped_column(String(64), nullable=False)
+    urgency: Mapped[str] = mapped_column(String(64), nullable=False)
+    department: Mapped[str] = mapped_column(String(64), nullable=False)
+    classification: Mapped[str] = mapped_column(String(64), nullable=False)
     confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     # Encrypted at rest — the triage summary is a neutral paraphrase of the
     # patient's email, so it's patient-identifying content too.
@@ -84,7 +84,7 @@ class DraftReview(Base, TimestampMixin):
 
     # --- review lifecycle ---
     status: Mapped[str] = mapped_column(
-        String(16), nullable=False, default=ReviewStatus.pending.value, index=True
+        String(64), nullable=False, default=ReviewStatus.pending.value, index=True
     )
     gmail_draft_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     reviewed_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
