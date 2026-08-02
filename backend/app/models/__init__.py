@@ -5,6 +5,7 @@ autogenerate and by the test suite's ``create_all``).
 """
 
 from app.models.base import Base, TimestampMixin
+from app.models.connected_account import ConnectedAccount
 from app.models.document import Document, DocumentSource
 from app.models.draft_review import DraftReview
 from app.models.google_credential import GoogleCredential
@@ -17,6 +18,7 @@ __all__ = [
     "TimestampMixin",
     "User",
     "UserRole",
+    "ConnectedAccount",
     "GoogleCredential",
     "Document",
     "DocumentSource",
