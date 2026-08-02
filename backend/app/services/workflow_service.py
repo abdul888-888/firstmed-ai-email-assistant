@@ -1,6 +1,6 @@
 """Workflow intelligence engine (Phase 6).
 
-Orchestrates the explicit, ordered pipeline over one inbound Gmail message:
+Orchestrates the explicit, ordered pipeline over one inbound email message:
 
     1. triage        (Claude, structured)   -> intent / urgency / department / confidence
     2. safety check  (pure rules)           -> ADMIN_DIRECT_REPLY | NEEDS_PHYSICIAN_REVIEW
@@ -9,32 +9,38 @@ Orchestrates the explicit, ordered pipeline over one inbound Gmail message:
                                                 safe, clinician-deferring draft)
 
 The engine then persists a ``DraftReview`` with ``status=pending`` and — per the
-Phase 6 decision — writes **nothing to Gmail**. A Gmail draft is created only when
-a human approves (:meth:`approve`), which still never *sends*.
+Phase 6 decision — writes **nothing to the email provider**. A draft is created
+only when a human approves (:meth:`approve`), which still never *sends*.
 
 AI-backed dependencies are injectable so tests use fakes / mock transports and
-never hit the network.
+never hit the network. The email provider is also injectable so tests can use
+a FakeEmailProvider without connecting to Gmail, Outlook, or IMAP servers.
 """
 
 from __future__ import annotations
 
-import httpx
+from typing import TYPE_CHECKING
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.client import AIClient
+from app.core.email import BaseEmailProvider, get_email_provider
 from app.core.logging import get_logger
 from app.models.draft_review import DraftReview
 from app.models.user import User
+from app.repositories.connected_account import ConnectedAccountRepository
 from app.repositories.draft_review import (
     DraftReviewRepository,
     DuplicateReviewError,
-    StaleReviewStatusError,
 )
+from app.schemas.email import NormalizedEmail
 from app.schemas.review import ReviewClassification, ReviewStatus
 from app.services.draft_service import DraftService
-from app.services.gmail_service import GmailService
 from app.services.safety import classify_review
 from app.services.triage_service import TriageService
+
+if TYPE_CHECKING:
+    from app.models.connected_account import ConnectedAccount
 
 logger = get_logger(__name__)
 
@@ -45,57 +51,82 @@ class WorkflowService:
         session: AsyncSession,
         *,
         ai: AIClient | None = None,
-        gmail_client: httpx.AsyncClient | None = None,
+        email_provider: BaseEmailProvider | None = None,
     ) -> None:
+        """Initialize the workflow service.
+
+        Args:
+            session: AsyncSession for database access.
+            ai: Optional AIClient for triage/draft generation. If None, uses defaults.
+            email_provider: Optional BaseEmailProvider for email operations. If None,
+                providers are resolved lazily from ConnectedAccount rows via the factory.
+        """
         self.session = session
         self.repo = DraftReviewRepository(session)
+        self.account_repo = ConnectedAccountRepository(session)
         self.triage = TriageService(ai)
         self.draft = DraftService(session, ai)
-        self.gmail = GmailService(session, client=gmail_client)
+        self._email_provider = email_provider
 
-    async def pull_gmail(
+    async def _provider(
+        self, account: ConnectedAccount | None
+    ) -> BaseEmailProvider:
+        """Lazy-resolve the email provider for an account.
+
+        If the service was initialized with an injected provider, use that
+        (typically for testing with a FakeEmailProvider). Otherwise, resolve
+        the provider from the account's provider_type via the factory.
+        """
+        if self._email_provider is not None:
+            return self._email_provider
+        if account is None:
+            from app.core.email import EmailProviderNotConnectedError
+
+            raise EmailProviderNotConnectedError("No email account connected")
+        return get_email_provider(account, self.session)
+
+    async def pull_messages(
         self,
         user: User,
+        account: ConnectedAccount,
         *,
         max_results: int = 12,
-        query: str = "in:inbox -category:promotions -category:social -category:updates -category:forums",
+        query: str | None = None,
     ) -> dict[str, int]:
-        """List recent inbox messages and triage every one not seen before.
+        """List recent messages from a connected account and triage every one not seen before.
+
+        Provider-agnostic replacement for ``pull_gmail``. Works with any provider
+        (Gmail, Outlook, IMAP/SMTP).
 
         Idempotent: messages that already have a review (any status) are skipped,
         so repeated pulls never duplicate cards. The ``existing_message_ids``
         pre-check handles the common case; a DB-level unique constraint on
-        ``(user_id, gmail_message_id)`` is the race-safe backstop for two
-        concurrent pulls (or a pull racing the direct single-message endpoint) —
-        a duplicate insert there is caught as :class:`DuplicateReviewError` and
-        counted as skipped, not failed. Per-message AI/Gmail failures are logged
-        and skipped rather than aborting the whole pull. Defaults to the inbox
-        minus the noise categories (promotions/social/updates/forums); those
-        negative filters are harmless no-ops on accounts without tabbed categories,
-        so we still get the real inbox rather than an empty ``category:primary``.
-
-        Uses ``GmailService.list_new_messages`` — incremental (Gmail history)
-        sync once a cursor is bootstrapped, falling back to this bounded
-        search only on the first pull or once history has expired. ``query``
-        only applies to that fallback path (history sync has no query concept
-        — it returns everything new since last time, full stop).
+        ``(user_id, provider_message_id)`` is the race-safe backstop for two
+        concurrent pulls.
 
         Returns a summary: ``{"created", "skipped", "failed", "scanned"}``.
         """
-        listing = await self.gmail.list_new_messages(
-            user, max_results=max_results, query=query
+        provider = await self._provider(account)
+        messages, new_cursor = await provider.fetch_messages(
+            account.history_id,
+            max_results=max_results,
+            query=query,
         )
-        messages = listing.get("messages", []) or []
+
+        # Persist the new cursor for next time.
+        if new_cursor is not None:
+            await self.account_repo.update_history_id(account, history_id=new_cursor)
+
         seen = await self.repo.existing_message_ids(user.id)
 
         created = skipped = failed = 0
-        for m in messages:
-            mid = m.get("id")
-            if not mid or mid in seen:
+        for msg in messages:
+            mid = msg.external_message_id
+            if mid in seen:
                 skipped += 1
                 continue
             try:
-                await self.run_gmail(user, mid)
+                await self.run_message(user, account, msg)
                 seen.add(mid)
                 created += 1
             except DuplicateReviewError:
@@ -111,6 +142,7 @@ class WorkflowService:
                     error=str(exc),
                     error_type=type(exc).__name__,
                 )
+
         summary = {
             "created": created,
             "skipped": skipped,
@@ -120,41 +152,32 @@ class WorkflowService:
         logger.info("workflow.pull_complete", **summary)
         return summary
 
-    async def run_gmail(self, user: User, message_id: str) -> DraftReview:
-        """Run the pipeline on a Gmail message and persist a pending review.
+    async def run_message(
+        self, user: User, account: ConnectedAccount, message: NormalizedEmail
+    ) -> DraftReview:
+        """Run the pipeline on a normalized email message and persist a pending review.
 
-        Propagates domain errors for the API to translate: ``GmailNotConnectedError``
-        / ``GmailApiError`` and ``AIError`` / ``AINotConfiguredError``.
+        Provider-agnostic replacement for ``run_gmail``. Works with any provider.
         """
-        # Step 0/1 input — fetch the incoming email (full body, snippet fallback).
-        msg = await self.gmail.get_message(user, message_id)
-        subject = msg.get("subject", "")
-        body = msg.get("body") or msg.get("snippet", "")
+        subject = message.subject
+        body = message.body_text or message.raw_headers.get("snippet", "")
 
-        # Step 1 — triage. Skipped entirely (no LLM call) for messages Gmail's
-        # own labels already mark as noise — spam, promotions/social/forums/
-        # updates categories, or our own sent/draft copies (see the metadata-
-        # first fetch in GmailService.get_message). The safety gate below still
-        # runs its deterministic keyword checks against whatever text remains
-        # (the snippet), so a genuine emergency can never be silently dropped
-        # by this shortcut — only the LLM classification call is skipped.
-        if msg.get("is_noise"):
+        # Step 1 — triage. Skipped entirely for messages already marked as noise
+        # by the provider's own labels (spam, promotions, etc.). The safety gate
+        # below still runs its deterministic checks, so genuine emergencies
+        # can't be silently dropped.
+        if message.is_noise:
             triage = {
                 "intent": "irrelevant",
                 "urgency": "low",
                 "department": "front_office",
-                "summary": "Skipped — Gmail labels mark this as spam/promotions/social/sent/draft.",
+                "summary": "Skipped — provider labels mark this as noise (spam/promotions/sent/draft).",
                 "confidence": 1.0,
             }
         else:
             triage = await self.triage.classify(subject, body)
 
-        # Step 2 — safety gate (pure, deterministic). The raw text is passed so
-        # keyword gates (emergency / legal / billing dispute / domain-specific
-        # exclusions) can override a mis-triaged intent. The decision also
-        # carries the department (possibly overridden from the LLM's own pick,
-        # e.g. tagged "laboratory"/"gastroenterology"/"physiotherapy") so the
-        # persisted review routes to the right team, not just a generic bucket.
+        # Step 2 — safety gate (pure, deterministic).
         decision = classify_review(triage, text=f"{subject}\n{body}")
         classification, reason, department = (
             decision.classification,
@@ -162,10 +185,7 @@ class WorkflowService:
             decision.department,
         )
 
-        # Steps 3+4 — retrieve + draft, but ONLY for administrative emails cleared
-        # by the safety gate. Every other outcome is a hard exclusion: we persist a
-        # review with an EMPTY draft and route it to a human. Draft generation is
-        # never even reached for appointments, clinical questions, complaints, etc.
+        # Steps 3+4 — retrieve + draft, but only for safe outcomes.
         draft_body = ""
         citations: list[dict] = []
         model = ""
@@ -176,10 +196,9 @@ class WorkflowService:
             status = ReviewStatus.awaiting_specialist_input.value
         elif classification is ReviewClassification.ROUTE_TO_STAFF:
             status = ReviewStatus.needs_manual_handling.value
-        else:  # ADMIN_DIRECT_REPLY — the only draft-eligible outcome.
+        else:  # ADMIN_DIRECT_REPLY
             draft = await self.draft.generate(subject, body, abstain_if_ungrounded=True)
             if not draft.get("grounded", True):
-                # Knowledge-base miss: abstain rather than fabricate an answer.
                 status = ReviewStatus.needs_manual_handling.value
                 reason = f"{reason} No knowledge-base match — manual handling required."
                 logger.info(
@@ -195,10 +214,10 @@ class WorkflowService:
 
         review = await self.repo.create(
             user_id=user.id,
-            gmail_message_id=msg.get("id", message_id),
-            gmail_thread_id=msg.get("thread_id", ""),
-            message_id_header=msg.get("message_id_header", ""),
-            sender=msg.get("from", ""),
+            provider_message_id=message.external_message_id,
+            provider_thread_id=message.external_thread_id or "",
+            message_id_header=message.message_id_header or "",
+            sender=message.sender,
             subject=subject,
             intent=str(triage.get("intent", "")),
             urgency=str(triage.get("urgency", "")),
@@ -221,16 +240,16 @@ class WorkflowService:
         )
         return review
 
-    async def approve(self, user: User, review: DraftReview) -> DraftReview:
-        """Human-in-the-loop gate: push the vetted draft to Gmail Drafts (never
-        sends), then mark the review approved.
+    async def approve(self, user: User, account: ConnectedAccount, review: DraftReview) -> DraftReview:
+        """Human-in-the-loop gate: push the vetted draft to the email provider (never sends).
 
-        Claims the row atomically (pending/specialist_input_received ->
-        approved) BEFORE calling Gmail, so if two requests race (two staff, or a
-        double-click), only the winner ever reaches the Gmail API — the loser
-        raises :class:`StaleReviewStatusError` immediately. On a Gmail failure
-        after the claim, the status is reverted so the review can be retried.
+        Uses the email provider to create a draft, then marks the review approved.
+        Claims the row atomically (pending/specialist_input_received -> approved)
+        BEFORE calling the provider, so if two requests race, only the winner reaches
+        the provider API. On failure after the claim, the status is reverted.
         """
+        from app.repositories.draft_review import StaleReviewStatusError
+
         original_status = review.status
         claimed = await self.repo.claim_status(
             review.id,
@@ -243,12 +262,12 @@ class WorkflowService:
         subject = claimed.subject or ""
         reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
         try:
-            pushed = await self.gmail.create_draft(
-                user,
+            provider = await self._provider(account)
+            draft_id = await provider.create_draft(
                 to=claimed.sender,
                 subject=reply_subject,
                 body=claimed.draft_body,
-                thread_id=claimed.gmail_thread_id or None,
+                thread_id=claimed.provider_thread_id or None,
                 in_reply_to=claimed.message_id_header or None,
             )
         except Exception:
@@ -259,17 +278,17 @@ class WorkflowService:
             )
             raise
         updated = await self.repo.mark_approved(
-            claimed, gmail_draft_id=pushed["draft_id"], reviewed_by=user.id
+            claimed, provider_draft_id=draft_id, reviewed_by=user.id
         )
         logger.info(
             "workflow.review_approved",
             review_id=str(review.id),
-            gmail_draft_id=pushed["draft_id"],
+            provider_draft_id=draft_id,
         )
         return updated
 
     async def reject(self, user: User, review: DraftReview, reason: str) -> DraftReview:
-        """Reject a pending review with a reason. No Gmail interaction.
+        """Reject a pending review with a reason. No provider interaction.
 
         Claims the row atomically so a reject can't race an approve/send on the
         same review.
@@ -286,22 +305,24 @@ class WorkflowService:
         logger.info("workflow.review_rejected", review_id=str(review.id))
         return updated
 
-    async def send(self, user: User, review: DraftReview) -> DraftReview:
-        """Send the approved review's Gmail draft (outward-facing — delivers mail).
+    async def send(self, user: User, account: ConnectedAccount, review: DraftReview) -> DraftReview:
+        """Send the approved review's draft (outward-facing — delivers mail).
 
-        Claims the row atomically (approved -> sent) BEFORE calling Gmail, so a
-        double-send race (two requests both passing the pre-check) can never
-        both reach ``gmail.send_draft`` — the second raises
-        :class:`StaleReviewStatusError`. On a Gmail failure after the claim, the
-        status is reverted to ``approved`` so the review can be retried.
+        Uses the email provider to send the draft. Claims the row atomically
+        (approved -> sent) BEFORE calling the provider, so a double-send race
+        can't both reach the provider. On failure after the claim, the status
+        is reverted to ``approved`` so the review can be retried.
         """
+        from app.repositories.draft_review import StaleReviewStatusError
+
         claimed = await self.repo.claim_status(
             review.id,
             from_statuses=[ReviewStatus.approved.value],
             to_status=ReviewStatus.sent.value,
         )
         try:
-            result = await self.gmail.send_draft(user, claimed.gmail_draft_id or "")
+            provider = await self._provider(account)
+            sent_message_id = await provider.send_draft(claimed.provider_draft_id or "")
         except Exception:
             await self.repo.claim_status(
                 claimed.id,
@@ -309,11 +330,11 @@ class WorkflowService:
                 to_status=ReviewStatus.approved.value,
             )
             raise
-        updated = await self.repo.mark_sent(claimed, sent_message_id=result["message_id"])
+        updated = await self.repo.mark_sent(claimed, sent_message_id=sent_message_id)
         logger.info(
             "workflow.review_sent",
             review_id=str(review.id),
-            sent_message_id=result["message_id"],
+            sent_message_id=sent_message_id,
         )
         return updated
 
@@ -335,10 +356,9 @@ class WorkflowService:
         )
 
         # If requested, (re)generate the draft grounded on the specialist's
-        # guidance. Escalated reviews start with an EMPTY draft (no AI text is
-        # produced for clinical email pre-review), so this is the first time a
-        # draft is written — it must be built FROM the specialist input, not the
-        # generic pipeline. We pass the guidance as authoritative context.
+        # guidance. Escalated reviews start with an EMPTY draft, so this is
+        # the first time a draft is written — it must be built FROM the
+        # specialist input, not the generic pipeline.
         if should_revise and updated.subject:
             patient_context = updated.summary or updated.subject
             revised = await self.draft.generate(

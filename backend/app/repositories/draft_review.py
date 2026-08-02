@@ -15,10 +15,10 @@ from app.schemas.review import ReviewStatus
 
 
 class DuplicateReviewError(Exception):
-    """Raised when a (user_id, gmail_message_id) review already exists.
+    """Raised when a (user_id, provider_message_id) review already exists.
 
     Surfaces the DB-level unique constraint as a typed error so callers (the
-    Gmail pull loop, the direct single-message endpoint) can treat a race as a
+    pull loop, the direct single-message endpoint) can treat a race as a
     benign "already processed" rather than an unexpected failure.
     """
 
@@ -49,7 +49,7 @@ class DraftReviewRepository:
             await self.session.rollback()
             raise DuplicateReviewError(
                 f"A review already exists for user={fields.get('user_id')} "
-                f"gmail_message_id={fields.get('gmail_message_id')!r}"
+                f"provider_message_id={fields.get('provider_message_id')!r}"
             ) from exc
         await self.session.refresh(review)
         return review
@@ -91,13 +91,13 @@ class DraftReviewRepository:
         return review
 
     async def existing_message_ids(self, user_id: uuid.UUID) -> set[str]:
-        """Gmail message IDs this user already has a review for (any status).
+        """Provider message IDs this user already has a review for (any status).
 
-        Used by the Gmail "pull" workflow to skip messages already triaged so a
+        Used by the pull workflow to skip messages already triaged so a
         repeated pull is idempotent and never creates duplicate review cards.
         """
         result = await self.session.execute(
-            select(DraftReview.gmail_message_id).where(DraftReview.user_id == user_id)
+            select(DraftReview.provider_message_id).where(DraftReview.user_id == user_id)
         )
         return {mid for mid in result.scalars().all() if mid}
 
@@ -146,11 +146,11 @@ class DraftReviewRepository:
         self,
         review: DraftReview,
         *,
-        gmail_draft_id: str,
+        provider_draft_id: str,
         reviewed_by: uuid.UUID,
     ) -> DraftReview:
         review.status = ReviewStatus.approved.value
-        review.gmail_draft_id = gmail_draft_id
+        review.provider_draft_id = provider_draft_id
         review.reviewed_by = reviewed_by
         review.reviewed_at = dt.datetime.now(dt.UTC)
         await self.session.commit()
