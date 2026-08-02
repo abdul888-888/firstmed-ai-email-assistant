@@ -14,6 +14,7 @@ from app.api import (
     ai,
     analytics,
     drafts,
+    email,
     gmail,
     healzz,
     notion,
@@ -32,6 +33,7 @@ api_router.include_router(health_module.router)
 api_router.include_router(auth_routes.router)
 
 # Implemented integrations
+api_router.include_router(email.router)
 api_router.include_router(gmail.router)
 api_router.include_router(notion.router)
 api_router.include_router(search.router)

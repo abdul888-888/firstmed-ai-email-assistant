@@ -64,6 +64,16 @@ class Settings(BaseSettings):
         "https://www.googleapis.com/auth/gmail.compose",
     ]
 
+    # --- Microsoft Graph / Outlook (Phase 4) ---
+    outlook_client_id: str = ""
+    outlook_client_secret: SecretStr = SecretStr("")
+    outlook_tenant_id: str = "common"
+    outlook_redirect_uri: str = ""
+
+    # --- IMAP/SMTP defaults (Phase 3) ---
+    imap_default_port: int = 993
+    smtp_default_port: int = 587
+
     # --- Notion (Phase 3) ---
     notion_api_key: SecretStr = SecretStr("")
     notion_root_page_id: str = ""
@@ -132,6 +142,16 @@ class Settings(BaseSettings):
     @property
     def google_oauth_configured(self) -> bool:
         return bool(self.google_client_id and self.google_client_secret)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def outlook_configured(self) -> bool:
+        return bool(self.outlook_client_id and self.outlook_client_secret.get_secret_value())
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def imap_smtp_configured(self) -> bool:
+        return True  # Ready to accept IMAP connections; no server-side config needed
 
     @computed_field  # type: ignore[prop-decorator]
     @property

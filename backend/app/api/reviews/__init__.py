@@ -15,8 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
+from app.core.email import EmailProviderError, EmailProviderNotConnectedError
 from app.core.logging import get_logger
 from app.models.user import User
+from app.repositories.connected_account import ConnectedAccountRepository
 from app.repositories.draft_review import DraftReviewRepository, StaleReviewStatusError
 from app.schemas.review import (
     DraftReviewRead,
@@ -26,7 +28,6 @@ from app.schemas.review import (
     ReviewStatus,
     SpecialistInput,
 )
-from app.services.gmail_service import GmailApiError, GmailNotConnectedError
 from app.services.workflow_service import WorkflowService
 
 router = APIRouter(prefix="/reviews", tags=["reviews"])
@@ -35,7 +36,7 @@ logger = get_logger(__name__)
 _NOT_FOUND = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
 _NOT_CONNECTED = HTTPException(
     status_code=status.HTTP_409_CONFLICT,
-    detail="Google account is not connected.",
+    detail="Email account is not connected.",
 )
 _STALE = HTTPException(
     status_code=status.HTTP_409_CONFLICT,
@@ -136,7 +137,7 @@ async def edit_review(
 @router.post(
     "/{review_id}/approve",
     response_model=DraftReviewRead,
-    summary="Approve a review → push the draft to Gmail Drafts (never sends)",
+    summary="Approve a review → push the draft to email provider (never sends)",
 )
 async def approve_review(
     review_id: str,
@@ -149,23 +150,31 @@ async def approve_review(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Cannot approve review in {review.status} status.",
         )
-    # Safety guard: an excluded/abstained review carries no AI draft. It must be
-    # handled manually, never pushed to Gmail — refuse to approve an empty draft.
+    # Safety guard: an excluded/abstained review carries no AI draft.
     if not review.draft_body.strip():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="This email has no AI draft and must be handled manually.",
         )
+
+    # Resolve the user's connected account.
+    account_repo = ConnectedAccountRepository(session)
+    account = await account_repo.get_by_user_id(current_user.id)
+    if account is None:
+        raise _NOT_CONNECTED
+
     try:
-        updated = await WorkflowService(session).approve(current_user, review)
+        updated = await WorkflowService(session).approve(
+            current_user, account, review
+        )
     except StaleReviewStatusError as exc:
         raise _STALE from exc
-    except GmailNotConnectedError as exc:
+    except EmailProviderNotConnectedError as exc:
         raise _NOT_CONNECTED from exc
-    except GmailApiError as exc:
+    except EmailProviderError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Gmail draft creation failed: {exc}",
+            detail=f"Email provider error: {exc}",
         ) from exc
     return DraftReviewRead.model_validate(updated)
 
@@ -220,7 +229,7 @@ async def submit_specialist_input(
 @router.post(
     "/{review_id}/send",
     response_model=DraftReviewRead,
-    summary="Send an approved review's draft via Gmail (outward-facing)",
+    summary="Send an approved review's draft via email provider (outward-facing)",
 )
 async def send_review(
     review_id: str,
@@ -229,15 +238,24 @@ async def send_review(
 ) -> DraftReviewRead:
     review = await _load_owned(review_id, current_user, session)
     _require_status(review, ReviewStatus.approved)
+
+    # Resolve the user's connected account.
+    account_repo = ConnectedAccountRepository(session)
+    account = await account_repo.get_by_user_id(current_user.id)
+    if account is None:
+        raise _NOT_CONNECTED
+
     try:
-        updated = await WorkflowService(session).send(current_user, review)
+        updated = await WorkflowService(session).send(
+            current_user, account, review
+        )
     except StaleReviewStatusError as exc:
         raise _STALE from exc
-    except GmailNotConnectedError as exc:
+    except EmailProviderNotConnectedError as exc:
         raise _NOT_CONNECTED from exc
-    except GmailApiError as exc:
+    except EmailProviderError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Gmail send failed: {exc}",
+            detail=f"Email provider error: {exc}",
         ) from exc
     return DraftReviewRead.model_validate(updated)

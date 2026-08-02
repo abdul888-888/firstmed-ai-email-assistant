@@ -44,3 +44,10 @@ fastembed==0.5.0
 
 psycopg2-binary
 aiosqlite
+
+# --- Email providers (Phase 3) ---
+aioimaplib>=1.1.0,<2
+aiosmtplib>=3.0.0,<4
+
+# --- Outlook OAuth (Phase 4) ---
+msal>=1.24.0,<2
