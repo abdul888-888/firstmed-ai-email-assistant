@@ -1,3 +1,5 @@
+"use client";
+
 import { useEffect, useState } from "react";
 import { Sidebar } from "@/components/sidebar";
 import { getToken, authHeader } from "@/lib/auth";
