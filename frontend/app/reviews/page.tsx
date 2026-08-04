@@ -214,6 +214,18 @@ function ReviewList({ reviews, selectedId, activeQueue, loading, onSelect, mobil
 
 function EmptyQueue() { return <div className="mx-3 mt-10 rounded-xl border border-dashed border-slate-300 bg-white p-7 text-center"><Inbox className="mx-auto mb-3 h-8 w-8 text-slate-300" /><p className="text-sm font-medium text-slate-700">Nothing here right now</p><p className="mt-1 text-xs leading-5 text-slate-500">Sync the inbox or choose another queue.</p></div>; }
 
+import { CollaborationDrawer } from "@/components/collaboration-drawer";
+import { NotionCitationDrawer } from "@/components/citation-drawer";
+
+const CLINICAL_DEPARTMENTS = [
+  "ALL_DEPARTMENTS",
+  "FRONT_OFFICE",
+  "PHYSIOTHERAPY",
+  "GASTROENTEROLOGY",
+  "LABORATORY",
+  "NURSE_SPECIALIST",
+];
+
 function ReviewDetail({ review, onRefresh, onSelectQueue, mobilePanel, onBack }: { review: Review | null; onRefresh: () => Promise<void>; onSelectQueue: (status: ReviewStatus) => void; mobilePanel: string; onBack: () => void }) {
   const [editing, setEditing] = useState(false); const [draft, setDraft] = useState(""); const [specialistInput, setSpecialistInput] = useState(""); const [note, setNote] = useState(""); const [notes, setNotes] = useState<ReviewNote[]>([]); const [team, setTeam] = useState<TeamMember[]>([]); const [busy, setBusy] = useState(false); const [message, setMessage] = useState<string | null>(null);
   useEffect(() => { if (!review) return; setDraft(review.draft_body); setSpecialistInput(""); setEditing(false); setMessage(null); void Promise.all([listReviewNotes(review.id), listTeamMembers()]).then(([nextNotes, nextTeam]) => { setNotes(nextNotes); setTeam(nextTeam); }).catch(() => {}); }, [review?.id]);
@@ -226,8 +238,22 @@ function ReviewDetail({ review, onRefresh, onSelectQueue, mobilePanel, onBack }:
       <div className="grid gap-4 xl:grid-cols-2"><Info label="AI triage" value={`${label(review.intent)} · ${review.urgency} priority`} /><Info label="Why this was routed" value={review.reason || "No reason was recorded."} /></div>
       {isManual ? <Card className="border-orange-200 bg-orange-50"><CardContent className="flex gap-3 py-5"><ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-orange-600" /><div><p className="font-semibold text-orange-900">Manual response required</p><p className="mt-1 text-sm leading-6 text-orange-800">This email intentionally has no AI draft. Handle it through your clinic’s normal process; it cannot be approved from this workspace.</p></div></CardContent></Card> : review.status === "awaiting_specialist_input" ? <SpecialistForm value={specialistInput} onChange={setSpecialistInput} disabled={busy} onSubmit={() => run(() => submitSpecialistInput(review.id, specialistInput, true), "Clinical guidance saved and draft regenerated.")} /> : <DraftEditor value={editing ? draft : review.draft_body} editable={editing} onChange={setDraft} onEdit={() => setEditing(true)} onCancel={() => { setDraft(review.draft_body); setEditing(false); }} onSave={() => run(() => editDraft(review.id, draft), "Draft saved.").then(() => setEditing(false))} disabled={busy} />}
       <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-5">{canApprove && <Button disabled={busy} onClick={() => run(() => approveReview(review.id), "Approved — a draft was saved to Gmail.")} className="bg-emerald-600 hover:bg-emerald-700"><Check className="h-4 w-4" />Approve to Gmail drafts</Button>}{canEdit && <Button variant="outline" disabled={busy} onClick={() => run(() => rejectReview(review.id, "Rejected by staff"), "Draft rejected.")}><X className="h-4 w-4" />Reject</Button>}{review.status === "approved" && <Button disabled={busy} onClick={() => run(() => sendReview(review.id), "Email sent.")} className="bg-slate-900 hover:bg-slate-800"><Send className="h-4 w-4" />Send email</Button>}</div>
-      <Sources citations={review.citations} />
-      <Collaboration review={review} team={team} notes={notes} note={note} setNote={setNote} busy={busy} onAssign={(user) => run(() => assignReview(review.id, user), "Assignment updated.")} onNote={() => run(async () => { const saved = await addReviewNote(review.id, note); setNotes((items) => [...items, saved]); setNote(""); }, "Note added.")} />
+      
+      {/* Notion RAG Verification & Citation Drawer */}
+      <NotionCitationDrawer
+        templateName="GP_Price_ValueCard_v2"
+        citations={review.citations}
+        workflowRule={review.reason}
+      />
+
+      {/* Internal Notes & Re-Assignment Drawer */}
+      <CollaborationDrawer
+        emailId={review.id}
+        currentDepartment={review.department}
+        onReassigned={async () => {
+          await onRefresh();
+        }}
+      />
     </div></div></section>;
 }
 

@@ -9,6 +9,7 @@ from app.models.connected_account import ConnectedAccount
 from app.models.document import Document, DocumentSource
 from app.models.draft_review import DraftReview
 from app.models.google_credential import GoogleCredential
+from app.models.internal_note import InternalNote
 from app.models.review_note import ReviewNote
 from app.models.template import Template
 from app.models.user import User, UserRole
@@ -25,4 +26,5 @@ __all__ = [
     "DraftReview",
     "ReviewNote",
     "Template",
+    "InternalNote",
 ]

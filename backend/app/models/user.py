@@ -14,10 +14,18 @@ from app.models.base import Base, TimestampMixin
 class UserRole(str, enum.Enum):
     """Staff roles, mirroring the PRD 'User Roles' section."""
 
-    front_office = "front_office"
-    nurse = "nurse"
-    specialist = "specialist"
-    admin = "admin"
+    ADMIN = "ADMIN"
+    FRONT_OFFICE = "FRONT_OFFICE"
+    PHYSIOTHERAPY = "PHYSIOTHERAPY"
+    GASTROENTEROLOGY = "GASTROENTEROLOGY"
+    LABORATORY = "LABORATORY"
+    NURSE_SPECIALIST = "NURSE_SPECIALIST"
+
+    # Backward compatibility aliases
+    admin = "ADMIN"
+    front_office = "FRONT_OFFICE"
+    nurse = "NURSE_SPECIALIST"
+    specialist = "PHYSIOTHERAPY"
 
 
 class User(Base, TimestampMixin):
@@ -29,11 +37,14 @@ class User(Base, TimestampMixin):
     hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     role: Mapped[UserRole] = mapped_column(
-        Enum(UserRole, name="user_role"),
-        default=UserRole.front_office,
+        Enum(UserRole, name="user_role", native_enum=False),
+        default=UserRole.FRONT_OFFICE,
         nullable=False,
     )
+    department: Mapped[str] = mapped_column(String(50), default="FRONT_OFFICE", nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_on_shift: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    shift_started_at: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     def __repr__(self) -> str:  # pragma: no cover - debug helper
         return f"<User id={self.id} email={self.email!r} role={self.role.value}>"

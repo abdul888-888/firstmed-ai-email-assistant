@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Mail, BarChart3, LogOut, Stethoscope } from "lucide-react";
+import { Mail, BarChart3, LogOut, Stethoscope, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { clearToken } from "@/lib/auth";
 import { useState } from "react";
@@ -16,7 +16,8 @@ type NavItem = {
 };
 
 const navItems: NavItem[] = [
-  { href: "/reviews", label: "Inbox Queue", icon: <Mail className="h-5 w-5" /> },
+  { href: "/reviews", label: "Inbox Workspace", icon: <Mail className="h-5 w-5" /> },
+  { href: "/admin/users", label: "Admin Users", icon: <Users className="h-5 w-5" /> },
   { href: "/analytics", label: "Analytics", icon: <BarChart3 className="h-5 w-5" /> },
 ];
 

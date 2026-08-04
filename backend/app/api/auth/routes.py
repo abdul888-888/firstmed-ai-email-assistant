@@ -107,7 +107,15 @@ async def login(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="User account is inactive"
         )
-    token = create_access_token(str(user.id), extra_claims={"role": user.role.value})
+    token = create_access_token(
+        str(user.id),
+        extra_claims={
+            "role": user.role.value,
+            "roles": [user.role.value],
+            "department": getattr(user, "department", "FRONT_OFFICE"),
+            "is_on_shift": getattr(user, "is_on_shift", True),
+        },
+    )
     logger.info("auth.login_success", user_id=str(user.id))
     return Token(access_token=token)
 
