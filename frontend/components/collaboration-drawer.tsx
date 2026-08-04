@@ -10,7 +10,8 @@ import {
   Share2,
   Clock,
 } from "lucide-react";
-import { getToken } from "@/lib/auth";
+import { getToken, authHeader } from "@/lib/auth";
+import { API_BASE_URL } from "@/lib/api";
 
 interface InternalNoteItem {
   id: string;
@@ -53,10 +54,9 @@ export function CollaborationDrawer({
   const fetchNotes = async () => {
     if (!emailId) return;
     setLoading(true);
-    const token = getToken();
     try {
-      const res = await fetch(`/api/proxy/email/${emailId}/notes`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const res = await fetch(`${API_BASE_URL}/api/v1/email/${emailId}/notes`, {
+        headers: { ...authHeader() },
       });
       if (res.ok) {
         const data = await res.json();
@@ -75,13 +75,12 @@ export function CollaborationDrawer({
   const handleAddNote = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!content.trim()) return;
-    const token = getToken();
     try {
-      const res = await fetch(`/api/proxy/email/${emailId}/notes`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/email/${emailId}/notes`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          ...authHeader(),
         },
         body: JSON.stringify({
           content,
@@ -99,13 +98,12 @@ export function CollaborationDrawer({
   const handleReassign = async (e: React.FormEvent) => {
     e.preventDefault();
     setReassigning(true);
-    const token = getToken();
     try {
-      const res = await fetch(`/api/proxy/email/${emailId}/reassign`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/email/${emailId}/reassign`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          ...authHeader(),
         },
         body: JSON.stringify({
           target_department: targetDepartment,

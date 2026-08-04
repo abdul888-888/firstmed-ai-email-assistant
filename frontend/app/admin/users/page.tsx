@@ -1,8 +1,7 @@
-"use client";
-
 import { useEffect, useState } from "react";
 import { Sidebar } from "@/components/sidebar";
-import { getToken } from "@/lib/auth";
+import { getToken, authHeader } from "@/lib/auth";
+import { API_BASE_URL } from "@/lib/api";
 import {
   Users,
   UserPlus,
@@ -61,10 +60,9 @@ export default function AdminUsersPage() {
   const fetchUsers = async () => {
     setLoading(true);
     setError("");
-    const token = getToken();
     try {
-      const res = await fetch("/api/proxy/admin/users", {
-        headers: { Authorization: `Bearer ${token}` },
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/users`, {
+        headers: { ...authHeader() },
       });
       if (!res.ok) {
         throw new Error(`Failed to load users (${res.status})`);
@@ -93,13 +91,12 @@ export default function AdminUsersPage() {
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
-    const token = getToken();
     try {
-      const res = await fetch("/api/proxy/admin/users", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/users`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          ...authHeader(),
         },
         body: JSON.stringify({
           email: newEmail,
@@ -127,13 +124,12 @@ export default function AdminUsersPage() {
   };
 
   const handleToggleShift = async (user: UserItem) => {
-    const token = getToken();
     try {
-      const res = await fetch(`/api/proxy/admin/users/${user.id}`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/users/${user.id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          ...authHeader(),
         },
         body: JSON.stringify({
           is_on_shift: !user.is_on_shift,
@@ -146,13 +142,12 @@ export default function AdminUsersPage() {
   };
 
   const handleRoleChange = async (user: UserItem, role: string) => {
-    const token = getToken();
     try {
-      const res = await fetch(`/api/proxy/admin/users/${user.id}`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/users/${user.id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          ...authHeader(),
         },
         body: JSON.stringify({
           role,
