@@ -65,11 +65,15 @@ def require_roles(
     """Dependency factory enforcing that the current user has one of ``roles``."""
 
     async def _dependency(current_user: User = Depends(get_current_user)) -> User:
-        if roles and current_user.role not in roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Insufficient permissions for this resource",
-            )
+        if roles:
+            # Handle case-insensitive role comparison for PostgreSQL compatibility
+            user_role_upper = current_user.role.value.upper()
+            role_values = [r.value.upper() for r in roles]
+            if user_role_upper not in role_values:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Insufficient permissions for this resource",
+                )
         return current_user
 
     return _dependency
