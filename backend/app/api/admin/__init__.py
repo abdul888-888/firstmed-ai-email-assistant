@@ -47,7 +47,7 @@ async def module_status() -> dict:
     summary="List active staff (for assignment pickers)",
 )
 async def list_users(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
     session: AsyncSession = Depends(get_db),
 ) -> UserList:
     users = await UserRepository(session).list_active()
