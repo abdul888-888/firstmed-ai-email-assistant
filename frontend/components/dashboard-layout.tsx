@@ -21,13 +21,15 @@ interface CurrentUser {
 
 // Map backend role values to frontend UI roles
 function mapBackendRoleToFrontend(backendRole: string): "front_office" | "clinical_reviewer" | "booking_coordinator" | "admin" {
+  // Normalize to uppercase for consistent mapping
+  const normalizedRole = backendRole.toUpperCase();
   const roleMap: Record<string, "front_office" | "clinical_reviewer" | "booking_coordinator" | "admin"> = {
     "ADMIN": "admin",
     "FRONT_OFFICE": "front_office",
     "CLINICAL_REVIEWER": "clinical_reviewer",
     "BOOKING_COORDINATOR": "booking_coordinator",
   };
-  return roleMap[backendRole] || "front_office";
+  return roleMap[normalizedRole] || "front_office";
 }
 
 export function DashboardLayout({ children }: { children: React.ReactNode }) {
