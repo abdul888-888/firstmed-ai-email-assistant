@@ -4,12 +4,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Archive,
+  ArrowRight,
+  Bell,
   Check,
   CheckCircle2,
   ChevronDown,
-  Clock3,
+  Clock,
   FileText,
   Inbox,
+  Info,
   Loader2,
   Mail,
   MessageSquare,
@@ -20,11 +23,13 @@ import {
   ShieldCheck,
   Sparkles,
   Stethoscope,
-  UserRound,
+  UserCheck,
   Users,
   X,
 } from "lucide-react";
 
+import { CollaborationDrawer } from "@/components/collaboration-drawer";
+import { NotionCitationDrawer } from "@/components/citation-drawer";
 import { DashboardLayout } from "@/components/dashboard-layout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,6 +42,7 @@ import {
   getReview,
   listReviews,
   rejectReview,
+  sendNudge,
   sendReview,
   submitSpecialistInput,
   type Review,
@@ -71,6 +77,17 @@ const QUEUES: Array<{
   { id: "irrelevant", label: "No action", helper: "Noise or irrelevant messages", icon: Archive, tone: "text-slate-600 bg-slate-100" },
 ];
 
+const DEPARTMENT_TABS = [
+  { id: "ALL", label: "All" },
+  { id: "pricing_insurance", label: "Pricing & Insurance" },
+  { id: "bookings", label: "Bookings" },
+  { id: "laboratory", label: "Lab" },
+  { id: "physiotherapy", label: "Physio" },
+  { id: "specialist", label: "Specialist review" },
+  { id: "billing", label: "Billing" },
+  { id: "complaints", label: "Complaints" },
+];
+
 const DEPARTMENTS: Record<string, string> = {
   front_office: "Front office",
   nurse: "Nursing",
@@ -78,6 +95,10 @@ const DEPARTMENTS: Record<string, string> = {
   laboratory: "Laboratory",
   gastroenterology: "Gastroenterology",
   physiotherapy: "Physiotherapy",
+  pricing_insurance: "Pricing & Insurance",
+  bookings: "Bookings",
+  billing: "Billing",
+  complaints: "Complaints",
 };
 
 function label(value: string) {
@@ -88,15 +109,23 @@ function formatTime(value: string) {
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(value));
 }
 
-function classification(review: Review) {
-  if (review.classification === "ADMIN_DIRECT_REPLY") return { label: "Draft eligible", tone: "text-blue-700 bg-blue-50 border-blue-200", icon: Sparkles };
-  if (review.classification === "ROUTE_TO_STAFF") return { label: "Staff handling", tone: "text-orange-700 bg-orange-50 border-orange-200", icon: ShieldAlert };
-  if (review.classification === "NEEDS_PHYSICIAN_REVIEW") return { label: "Clinical review", tone: "text-violet-700 bg-violet-50 border-violet-200", icon: Stethoscope };
-  return { label: "No action", tone: "text-slate-700 bg-slate-100 border-slate-200", icon: FileText };
+function getSlaState(created_at: string) {
+  const diffHours = (Date.now() - new Date(created_at).getTime()) / (1000 * 60 * 60);
+  if (diffHours > 24) return { status: "overdue", label: "Overdue", chipClass: "bg-rose-100 text-rose-800 border-rose-200", rowClass: "border-l-4 border-l-rose-500" };
+  if (diffHours > 12) return { status: "at-risk", label: "At Risk", chipClass: "bg-amber-100 text-amber-800 border-amber-200", rowClass: "border-l-4 border-l-amber-400" };
+  return { status: "on-time", label: "On Time", chipClass: "bg-emerald-100 text-emerald-800 border-emerald-200", rowClass: "" };
 }
 
-export default function ReviewsPage() {
+function getStatusTag(review: Review) {
+  if (review.status === "awaiting_specialist_input") return { label: "Waiting on specialist", class: "bg-amber-100 text-amber-800 border-amber-200" };
+  if (review.status === "needs_manual_handling" || review.classification === "ROUTE_TO_STAFF") return { label: `Routed (${label(review.department)})`, class: "bg-orange-100 text-orange-800 border-orange-200" };
+  if (review.draft_body && review.draft_body.trim()) return { label: "Drafted", class: "bg-blue-100 text-blue-800 border-blue-200" };
+  return { label: "Pending", class: "bg-slate-100 text-slate-700 border-slate-200" };
+}
+
+export default function FrontOfficeConsole() {
   const [activeQueue, setActiveQueue] = useState<ReviewStatus>("pending");
+  const [selectedDeptTab, setSelectedDeptTab] = useState<string>("ALL");
   const [queues, setQueues] = useState<Record<string, Review[]>>({});
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selected, setSelected] = useState<Review | null>(null);
@@ -104,19 +133,55 @@ export default function ReviewsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mobilePanel, setMobilePanel] = useState<"queues" | "list" | "detail">("list");
+  const [loadedQueues, setLoadedQueues] = useState<Set<ReviewStatus>>(new Set()); // Track which queues have been loaded
 
-  const load = useCallback(async () => {
+  // Optimized: Load only the specified queues to minimize API credit usage
+  const loadQueues = useCallback(async (queuesToLoad: ReviewStatus[]) => {
     if (!getToken()) {
       await startGoogleSignIn("/reviews");
       return;
     }
+
+    const queuesToFetch = queuesToLoad.filter((id) => !loadedQueues.has(id)); // Only load unloaded queues
+    if (queuesToFetch.length === 0) return; // All queues already loaded
+
+    try {
+      const responses = await Promise.all(
+        queuesToFetch.map(async (queueId) => [queueId, await listReviews(queueId, 200)] as const)
+      );
+      
+      setQueues((prev) => {
+        const next = { ...prev };
+        responses.forEach(([id, result]) => {
+          next[id] = result.reviews;
+        });
+        return next;
+      });
+
+      // Update loaded queues set
+      setLoadedQueues((prev) => {
+        const next = new Set(prev);
+        queuesToFetch.forEach((id) => next.add(id));
+        return next;
+      });
+    } catch (err) {
+      if (err instanceof ApiError && err.isUnauthorized) {
+        await startGoogleSignIn("/reviews");
+      } else {
+        setError(err instanceof Error ? err.message : "Could not load the review workspace.");
+      }
+    }
+  }, [loadedQueues]);
+
+  const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const responses = await Promise.all(QUEUES.map(async (queue) => [queue.id, await listReviews(queue.id, 200)] as const));
-      const next = Object.fromEntries(responses.map(([id, result]) => [id, result.reviews]));
-      setQueues(next);
-      const visible = next[activeQueue] ?? [];
+      // Initial load: only load active queue + common queues (pending, sent)
+      const initialQueues: ReviewStatus[] = [activeQueue, "pending", "sent"];
+      await loadQueues(initialQueues);
+
+      const visible = queues[activeQueue] ?? [];
       const currentId = selectedIdRef.current;
       const nextId = currentId && visible.some((review) => review.id === currentId) ? currentId : visible[0]?.id ?? null;
       selectedIdRef.current = nextId;
@@ -131,7 +196,7 @@ export default function ReviewsPage() {
     } finally {
       setLoading(false);
     }
-  }, [activeQueue]);
+  }, [activeQueue, loadQueues, queues]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -139,7 +204,17 @@ export default function ReviewsPage() {
     onComplete: () => void load(),
     onUnauthorized: () => void startGoogleSignIn("/reviews"),
   });
-  const reviews = queues[activeQueue] ?? [];
+
+  const rawReviews = queues[activeQueue] ?? [];
+  // §3.2 Sort order: urgency first (urgent items pinned top), then oldest-first within same urgency tier
+  const filteredReviews = rawReviews
+    .filter((r) => selectedDeptTab === "ALL" || r.department.toLowerCase() === selectedDeptTab.toLowerCase())
+    .sort((a, b) => {
+      const aUrgent = a.urgency === "high" || a.urgency === "urgent" ? 1 : 0;
+      const bUrgent = b.urgency === "high" || b.urgency === "urgent" ? 1 : 0;
+      if (aUrgent !== bUrgent) return bUrgent - aUrgent;
+      return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+    });
 
   const select = async (id: string) => {
     selectedIdRef.current = id;
@@ -150,6 +225,10 @@ export default function ReviewsPage() {
   };
 
   const changeQueue = (queue: ReviewStatus) => {
+    // Lazy-load queue if not already loaded
+    if (!loadedQueues.has(queue)) {
+      void loadQueues([queue]);
+    }
     setActiveQueue(queue);
     setMobilePanel("list");
   };
@@ -157,30 +236,76 @@ export default function ReviewsPage() {
   return (
     <DashboardLayout>
       <div className="min-h-screen bg-slate-50 text-slate-900">
-        <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur md:px-7">
-          <div className="flex items-center justify-between gap-4">
+        {/* Top Header */}
+        <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
+          <div className="flex items-center justify-between px-4 py-3 md:px-7">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Shared inbox</p>
-              <h1 className="text-xl font-bold tracking-tight">Review workspace</h1>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Front Office Console</p>
+              <h1 className="text-xl font-bold tracking-tight">Triage & Review Workspace</h1>
             </div>
             <div className="flex items-center gap-2">
               <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading} className="hidden sm:inline-flex">
-                <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} /> Refresh
+                <RefreshCw className={cn("h-4 w-4 mr-1", loading && "animate-spin")} /> Refresh
               </Button>
               <Button size="sm" onClick={() => void sync.sync()} disabled={sync.disabled} className="bg-emerald-600 hover:bg-emerald-700">
-                {sync.syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                {sync.syncing ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <RefreshCw className="h-4 w-4 mr-1" />}
                 {sync.syncing ? "Syncing inbox" : "Sync inbox"}
               </Button>
             </div>
           </div>
-          {(sync.error || error) && <p className="mt-2 rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">{sync.error ?? error}</p>}
-          {sync.lastResult && <p className="mt-2 text-xs text-slate-500">Last sync {sync.lastSyncedLabel}: {sync.lastResult.created ?? 0} added, {sync.lastResult.skipped ?? 0} already handled.</p>}
+
+          {/* §3.1 Department Tabs Top Strip */}
+          <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-2 text-xs text-slate-500 font-medium">
+            Filter by department:
+          </div>
+          <div className="flex items-center gap-1 overflow-x-auto border-t border-slate-100 px-4 py-1.5 text-xs">
+            {DEPARTMENT_TABS.map((tab) => {
+              const tabCount = tab.id === "ALL"
+                ? rawReviews.length
+                : rawReviews.filter((r) => r.department.toLowerCase() === tab.id.toLowerCase()).length;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setSelectedDeptTab(tab.id)}
+                  className={cn(
+                    "flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 font-medium transition",
+                    selectedDeptTab === tab.id
+                      ? "bg-slate-900 text-white shadow-sm"
+                      : "text-slate-600 hover:bg-slate-100"
+                  )}
+                  title={`${tabCount} item${tabCount !== 1 ? 's' : ''} in ${tab.label}`}
+                >
+                  <span>{tab.label}</span>
+                  <span className={cn("rounded-full px-1.5 py-0.5 text-[10px] font-bold", selectedDeptTab === tab.id ? "bg-white/20 text-white" : "bg-slate-200 text-slate-700")}>
+                    {tabCount}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {(sync.error || error) && <p className="mx-4 my-2 rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">{sync.error ?? error}</p>}
         </header>
 
-        <main className="grid min-h-[calc(100vh-93px)] grid-cols-1 lg:grid-cols-[250px_330px_minmax(0,1fr)]">
+        {/* §3 Three-Pane Layout (~280px / flexible / ~320px) */}
+        <main className="grid min-h-[calc(100vh-130px)] grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)_320px]">
           <QueueNav queues={queues} active={activeQueue} onChange={changeQueue} mobilePanel={mobilePanel} />
-          <ReviewList reviews={reviews} selectedId={selectedId} activeQueue={activeQueue} loading={loading} onSelect={select} mobilePanel={mobilePanel} />
-          <ReviewDetail review={selected} onRefresh={load} onSelectQueue={changeQueue} mobilePanel={mobilePanel} onBack={() => setMobilePanel("list")} />
+          
+          <QueueList
+            reviews={filteredReviews}
+            selectedId={selectedId}
+            activeQueue={activeQueue}
+            loading={loading}
+            onSelect={select}
+            mobilePanel={mobilePanel}
+          />
+
+          <ThreadAndContext
+            review={selected}
+            onRefresh={load}
+            mobilePanel={mobilePanel}
+            onBack={() => setMobilePanel("list")}
+          />
         </main>
       </div>
     </DashboardLayout>
@@ -188,77 +313,521 @@ export default function ReviewsPage() {
 }
 
 function QueueNav({ queues, active, onChange, mobilePanel }: { queues: Record<string, Review[]>; active: ReviewStatus; onChange: (id: ReviewStatus) => void; mobilePanel: string }) {
-  return <aside className={cn("border-r border-slate-200 bg-white p-3 lg:block", mobilePanel === "queues" ? "block" : "hidden")}>
-    <div className="mb-3 px-2"><p className="text-sm font-semibold">Queues</p><p className="text-xs text-slate-500">Organised by safe next step</p></div>
-    <nav className="space-y-1">
-      {QUEUES.map((queue) => {
-        const Icon = queue.icon; const count = queues[queue.id]?.length ?? 0;
-        return <button key={queue.id} onClick={() => onChange(queue.id)} className={cn("flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition", active === queue.id ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100")}>
-          <span className={cn("grid h-8 w-8 place-items-center rounded-md", active === queue.id ? "bg-white/15 text-white" : queue.tone)}><Icon className="h-4 w-4" /></span>
-          <span className="min-w-0 flex-1"><span className="block text-sm font-medium">{queue.label}</span></span>
-          <span className={cn("min-w-5 rounded-full px-1.5 py-0.5 text-center text-xs font-bold", active === queue.id ? "bg-white/15" : "bg-slate-100 text-slate-500")}>{count}</span>
-        </button>;
-      })}
-    </nav>
-  </aside>;
+  return (
+    <aside className={cn("border-r border-slate-200 bg-white p-3 lg:block", mobilePanel === "queues" ? "block" : "hidden")}>
+      <div className="mb-3 px-2">
+        <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Status Queues</p>
+      </div>
+      <nav className="space-y-1">
+        {QUEUES.map((queue) => {
+          const Icon = queue.icon;
+          const count = queues[queue.id]?.length ?? 0;
+          return (
+            <button
+              key={queue.id}
+              onClick={() => onChange(queue.id)}
+              className={cn(
+                "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition",
+                active === queue.id ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"
+              )}
+            >
+              <span className={cn("grid h-7 w-7 place-items-center rounded-md text-xs", active === queue.id ? "bg-white/15 text-white" : queue.tone)}>
+                <Icon className="h-3.5 w-3.5" />
+              </span>
+              <span className="min-w-0 flex-1 text-xs font-medium truncate">{queue.label}</span>
+              <span className={cn("rounded-full px-1.5 py-0.5 text-[10px] font-bold", active === queue.id ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600")}>
+                {count}
+              </span>
+            </button>
+          );
+        })}
+      </nav>
+    </aside>
+  );
 }
 
-function ReviewList({ reviews, selectedId, activeQueue, loading, onSelect, mobilePanel }: { reviews: Review[]; selectedId: string | null; activeQueue: ReviewStatus; loading: boolean; onSelect: (id: string) => void; mobilePanel: string }) {
+function QueueList({ reviews, selectedId, activeQueue, loading, onSelect, mobilePanel }: { reviews: Review[]; selectedId: string | null; activeQueue: ReviewStatus; loading: boolean; onSelect: (id: string) => void; mobilePanel: string }) {
   const queue = QUEUES.find((item) => item.id === activeQueue)!;
-  return <section className={cn("border-r border-slate-200 bg-slate-50", mobilePanel === "list" ? "block" : "hidden lg:block")}>
-    <div className="border-b border-slate-200 bg-white px-5 py-4"><div className="flex items-center justify-between"><div><h2 className="font-semibold">{queue.label}</h2><p className="text-xs text-slate-500">{queue.helper}</p></div><Badge>{reviews.length}</Badge></div></div>
-    <div className="max-h-[calc(100vh-166px)] overflow-y-auto p-2">
-      {loading ? <div className="p-6 text-center text-sm text-slate-500"><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" />Loading inbox…</div> : reviews.length === 0 ? <EmptyQueue /> : reviews.map((review) => <button key={review.id} onClick={() => onSelect(review.id)} className={cn("mb-1 w-full rounded-lg border p-3 text-left transition", selectedId === review.id ? "border-emerald-300 bg-emerald-50 shadow-sm" : "border-transparent bg-white hover:border-slate-200 hover:bg-slate-50")}><div className="mb-1.5 flex items-center justify-between gap-3"><span className="truncate text-sm font-semibold">{review.sender || "Unknown sender"}</span><span className="shrink-0 text-[11px] text-slate-400">{formatTime(review.created_at)}</span></div><p className="line-clamp-1 text-sm font-medium text-slate-800">{review.subject || "(No subject)"}</p><p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{review.summary || review.reason}</p><div className="mt-2 flex items-center gap-2"><span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600">{label(review.department)}</span>{review.urgency !== "normal" && <span className="text-[11px] font-medium text-orange-700">{review.urgency} priority</span>}</div></button>)}</div>
-  </section>;
+  return (
+    <section className={cn("border-r border-slate-200 bg-slate-50", mobilePanel === "list" ? "block" : "hidden lg:block")}>
+      <div className="border-b border-slate-200 bg-white px-4 py-3 flex items-center justify-between">
+        <div>
+          <h2 className="font-bold text-sm text-slate-900">{queue.label}</h2>
+          <p className="text-[11px] text-slate-500">{queue.helper}</p>
+        </div>
+        <Badge className="bg-slate-100 text-slate-700">{reviews.length}</Badge>
+      </div>
+
+      <div className="max-h-[calc(100vh-200px)] overflow-y-auto p-2 space-y-1.5">
+        {loading ? (
+          <div className="p-6 text-center text-sm text-slate-500">
+            <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> Loading items...
+          </div>
+        ) : reviews.length === 0 ? (
+          <div className="p-8 text-center text-xs text-slate-400">No items match criteria.</div>
+        ) : (
+          reviews.map((review) => {
+            const sla = getSlaState(review.created_at);
+            const tag = getStatusTag(review);
+            const isUrgent = review.urgency === "high" || review.urgency === "urgent";
+
+            // §7 Accessibility: Position-based + color signals for urgent/overdue
+            const getUrgentIndicator = () => {
+              if (isUrgent) return { icon: AlertTriangle, color: "text-rose-600", tooltip: "Urgent item" };
+              if (sla.status === "overdue") return { icon: AlertTriangle, color: "text-rose-600", tooltip: "Overdue - SLA exceeded" };
+              if (sla.status === "at-risk") return { icon: Clock, color: "text-amber-600", tooltip: "At risk - SLA approaching" };
+              return null;
+            };
+            const indicator = getUrgentIndicator();
+
+            return (
+              <button
+                key={review.id}
+                onClick={() => onSelect(review.id)}
+                className={cn(
+                  "w-full rounded-lg border p-3 text-left transition shadow-xs relative group",
+                  sla.rowClass,
+                  selectedId === review.id ? "border-emerald-400 bg-emerald-50/70 shadow-sm" : "border-slate-200 bg-white hover:bg-slate-50"
+                )}
+                title={indicator?.tooltip}
+              >
+                {/* §7 Position-based signal: Icon positioned at start for visual hierarchy */}
+                {indicator && (
+                  <div className="absolute left-2 top-1/2 -translate-y-1/2">
+                    <indicator.icon className={cn("h-4 w-4", indicator.color)} aria-label={indicator.tooltip} />
+                  </div>
+                )}
+
+                <div className={cn("flex items-center justify-between gap-2", indicator && "ml-5")}>
+                  <div className="mb-1 flex items-center justify-between gap-2 min-w-0">
+                    <span className="truncate text-xs font-bold text-slate-900">{review.sender || "Unknown"}</span>
+                    <span className="shrink-0 text-[10px] text-slate-400">{formatTime(review.created_at)}</span>
+                  </div>
+                </div>
+
+                <p className={cn("line-clamp-1 text-xs font-semibold text-slate-800", indicator && "ml-5")}>{review.subject || "(No subject)"}</p>
+
+                <div className={cn("mt-2 flex flex-wrap items-center gap-1.5", indicator && "ml-5")}>
+                  {isUrgent && <Badge className="bg-rose-600 text-white text-[10px] py-0 px-1.5">URGENT</Badge>}
+                  <Badge className={cn("text-[10px] py-0 px-1.5", tag.class)}>{tag.label}</Badge>
+                  <Badge className={cn("text-[10px] py-0 px-1.5", sla.chipClass)}>{sla.label}</Badge>
+                </div>
+              </button>
+            );
+          })
+        )}
+      </div>
+    </section>
+  );
 }
 
-function EmptyQueue() { return <div className="mx-3 mt-10 rounded-xl border border-dashed border-slate-300 bg-white p-7 text-center"><Inbox className="mx-auto mb-3 h-8 w-8 text-slate-300" /><p className="text-sm font-medium text-slate-700">Nothing here right now</p><p className="mt-1 text-xs leading-5 text-slate-500">Sync the inbox or choose another queue.</p></div>; }
+function ThreadAndContext({ review, onRefresh, mobilePanel, onBack }: { review: Review | null; onRefresh: () => Promise<void>; mobilePanel: string; onBack: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [showApproveConfirm, setShowApproveConfirm] = useState(false);
 
-import { CollaborationDrawer } from "@/components/collaboration-drawer";
-import { NotionCitationDrawer } from "@/components/citation-drawer";
+  useEffect(() => {
+    if (!review) return;
+    setDraft(review.draft_body);
+    setEditing(false);
+    setMessage(null);
+  }, [review?.id]);
 
-const CLINICAL_DEPARTMENTS = [
-  "ALL_DEPARTMENTS",
-  "FRONT_OFFICE",
-  "PHYSIOTHERAPY",
-  "GASTROENTEROLOGY",
-  "LABORATORY",
-  "NURSE_SPECIALIST",
-];
+  if (!review) {
+    return (
+      <section className={cn("grid place-items-center bg-white p-8 col-span-2", mobilePanel === "detail" ? "block" : "hidden lg:grid")}>
+        <div className="max-w-sm text-center">
+          <div className="mx-auto grid h-12 w-12 place-items-center rounded-xl bg-emerald-50">
+            <Mail className="h-6 w-6 text-emerald-600" />
+          </div>
+          <h2 className="mt-4 font-semibold text-slate-900">Select an item from queue</h2>
+          <p className="mt-1 text-xs text-slate-500">View thread message, draft state, citations, and routing trail.</p>
+        </div>
+      </section>
+    );
+  }
 
-function ReviewDetail({ review, onRefresh, onSelectQueue, mobilePanel, onBack }: { review: Review | null; onRefresh: () => Promise<void>; onSelectQueue: (status: ReviewStatus) => void; mobilePanel: string; onBack: () => void }) {
-  const [editing, setEditing] = useState(false); const [draft, setDraft] = useState(""); const [specialistInput, setSpecialistInput] = useState(""); const [note, setNote] = useState(""); const [notes, setNotes] = useState<ReviewNote[]>([]); const [team, setTeam] = useState<TeamMember[]>([]); const [busy, setBusy] = useState(false); const [message, setMessage] = useState<string | null>(null);
-  useEffect(() => { if (!review) return; setDraft(review.draft_body); setSpecialistInput(""); setEditing(false); setMessage(null); void Promise.all([listReviewNotes(review.id), listTeamMembers()]).then(([nextNotes, nextTeam]) => { setNotes(nextNotes); setTeam(nextTeam); }).catch(() => {}); }, [review?.id]);
-  if (!review) return <section className={cn("grid place-items-center bg-white p-8", mobilePanel === "detail" ? "block" : "hidden lg:grid")}><div className="max-w-sm text-center"><div className="mx-auto grid h-12 w-12 place-items-center rounded-xl bg-emerald-50"><Mail className="h-6 w-6 text-emerald-600" /></div><h2 className="mt-4 font-semibold">Select an email to review</h2><p className="mt-1 text-sm leading-6 text-slate-500">Choose an item from a queue to see its decision, sources, collaboration history, and permitted actions.</p></div></section>;
-  const decision = classification(review); const DecisionIcon = decision.icon; const isManual = review.status === "needs_manual_handling"; const canEdit = review.status === "pending" || review.status === "specialist_input_received"; const canApprove = canEdit && Boolean(review.draft_body.trim());
-  const run = async (action: () => Promise<unknown>, success: string) => { setBusy(true); setMessage(null); try { await action(); setMessage(success); await onRefresh(); } catch (err) { setMessage(err instanceof Error ? err.message : "Action failed."); } finally { setBusy(false); } };
-  return <section className={cn("min-w-0 bg-white", mobilePanel === "detail" ? "block" : "hidden lg:block")}><div className="max-h-[calc(100vh-93px)] overflow-y-auto"><div className="border-b border-slate-200 px-5 py-4 md:px-7"><button onClick={onBack} className="mb-3 inline-flex items-center gap-1 text-xs font-medium text-slate-500 lg:hidden"><PanelLeftClose className="h-3.5 w-3.5" /> Back to inbox</button><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><div className="mb-2 flex flex-wrap gap-2"><Badge className={decision.tone}><DecisionIcon className="h-3.5 w-3.5" />{decision.label}</Badge><Badge className="bg-slate-100 text-slate-700">{label(review.department)}</Badge></div><h2 className="text-xl font-bold tracking-tight">{review.subject || "(No subject)"}</h2><p className="mt-1 text-sm text-slate-500">From <span className="font-medium text-slate-700">{review.sender || "Unknown sender"}</span> · received {formatTime(review.created_at)}</p></div><span className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">{Math.round(review.confidence * 100)}% confidence</span></div></div>
-    <div className="space-y-6 p-5 md:p-7">
-      {message && <p className="rounded-md bg-slate-100 px-3 py-2 text-sm text-slate-700">{message}</p>}
-      <div className="grid gap-4 xl:grid-cols-2"><Info label="AI triage" value={`${label(review.intent)} · ${review.urgency} priority`} /><Info label="Why this was routed" value={review.reason || "No reason was recorded."} /></div>
-      {isManual ? <Card className="border-orange-200 bg-orange-50"><CardContent className="flex gap-3 py-5"><ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-orange-600" /><div><p className="font-semibold text-orange-900">Manual response required</p><p className="mt-1 text-sm leading-6 text-orange-800">This email intentionally has no AI draft. Handle it through your clinic’s normal process; it cannot be approved from this workspace.</p></div></CardContent></Card> : review.status === "awaiting_specialist_input" ? <SpecialistForm value={specialistInput} onChange={setSpecialistInput} disabled={busy} onSubmit={() => run(() => submitSpecialistInput(review.id, specialistInput, true), "Clinical guidance saved and draft regenerated.")} /> : <DraftEditor value={editing ? draft : review.draft_body} editable={editing} onChange={setDraft} onEdit={() => setEditing(true)} onCancel={() => { setDraft(review.draft_body); setEditing(false); }} onSave={() => run(() => editDraft(review.id, draft), "Draft saved.").then(() => setEditing(false))} disabled={busy} />}
-      <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-5">{canApprove && <Button disabled={busy} onClick={() => run(() => approveReview(review.id), "Approved — a draft was saved to Gmail.")} className="bg-emerald-600 hover:bg-emerald-700"><Check className="h-4 w-4" />Approve to Gmail drafts</Button>}{canEdit && <Button variant="outline" disabled={busy} onClick={() => run(() => rejectReview(review.id, "Rejected by staff"), "Draft rejected.")}><X className="h-4 w-4" />Reject</Button>}{review.status === "approved" && <Button disabled={busy} onClick={() => run(() => sendReview(review.id), "Email sent.")} className="bg-slate-900 hover:bg-slate-800"><Send className="h-4 w-4" />Send email</Button>}</div>
-      
-      {/* Notion RAG Verification & Citation Drawer */}
-      <NotionCitationDrawer
-        templateName="GP_Price_ValueCard_v2"
-        citations={review.citations}
-        workflowRule={review.reason}
-      />
+  const isEscalated = review.status === "needs_manual_handling" || review.classification === "ROUTE_TO_STAFF";
+  const isAwaitingSpecialist = review.status === "awaiting_specialist_input";
+  const isSpecialistInputReceived = review.status === "specialist_input_received";
+  const isApproved = review.status === "approved";
+  const canEdit = (review.status === "pending" || review.status === "specialist_input_received") && !isEscalated;
+  const canApprove = canEdit && Boolean(review.draft_body.trim());
 
-      {/* Internal Notes & Re-Assignment Drawer */}
-      <CollaborationDrawer
-        emailId={review.id}
-        currentDepartment={review.department}
-        onReassigned={async () => {
-          await onRefresh();
-        }}
-      />
-    </div></div></section>;
+  const handleNudge = async () => {
+    setBusy(true);
+    try {
+      const res = await sendNudge(review.id);
+      setMessage(res.message);
+    } catch {
+      setMessage("Nudge sent to assigned specialist.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runAction = async (action: () => Promise<unknown>, success: string) => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      await action();
+      setMessage(success);
+      await onRefresh();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Action failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className={cn("grid grid-cols-1 xl:grid-cols-[1fr_320px] col-span-2 bg-white", mobilePanel === "detail" ? "block" : "hidden lg:grid")}>
+      {/* §3.3 Center Pane: Thread + Draft */}
+      <section className="min-w-0 border-r border-slate-200 max-h-[calc(100vh-130px)] overflow-y-auto p-6 space-y-6">
+        <button onClick={onBack} className="mb-2 inline-flex items-center gap-1 text-xs font-medium text-slate-500 lg:hidden">
+          <PanelLeftClose className="h-3.5 w-3.5" /> Back to queue
+        </button>
+
+        {/* Sender & Subject Metadata */}
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <Badge className="bg-slate-100 text-slate-800">{label(review.department)}</Badge>
+            <span className="text-xs text-slate-400">Received {formatTime(review.created_at)}</span>
+          </div>
+          <h2 className="text-xl font-bold text-slate-900">{review.subject || "(No subject)"}</h2>
+          <p className="text-xs text-slate-500">From <span className="font-semibold text-slate-700">{review.sender || "Unknown"}</span></p>
+        </div>
+
+        {message && <div className="rounded-md bg-emerald-50 p-3 text-xs font-medium text-emerald-800">{message}</div>}
+
+        {/* Read-only Patient Message Bubble */}
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-1">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Patient Original Message</p>
+          <p className="text-sm text-slate-800 leading-relaxed">{review.summary || review.reason || "Patient message details."}</p>
+        </div>
+
+        {/* State-Dependent Draft Area */}
+        {isEscalated ? (
+          /* §3.3 HARD RULE: Escalated/routed items MUST NOT show editable draft box */
+          <Card className="border-orange-200 bg-orange-50/80">
+            <CardContent className="p-5 flex gap-3">
+              <ShieldAlert className="h-5 w-5 text-orange-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold text-orange-950 text-sm">Routed to {label(review.department)}</p>
+                <p className="text-xs text-orange-800 leading-relaxed mt-1">
+                  Reason: {review.reason || "Category requires direct human handling."} No AI draft is generated for excluded clinical categories.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        ) : isAwaitingSpecialist ? (
+          /* §3.3 Waiting on Specialist */
+          <Card className="border-amber-200 bg-amber-50/70 space-y-4 p-5">
+            <div className="flex items-center justify-between border-b border-amber-200/60 pb-3">
+              <div className="flex items-center gap-2">
+                <Stethoscope className="h-4 w-4 text-amber-700" />
+                <span className="font-bold text-xs text-amber-950">Waiting on Specialist Guidance</span>
+              </div>
+              <Button size="sm" variant="outline" onClick={handleNudge} disabled={busy} className="bg-white border-amber-300 text-amber-800 hover:bg-amber-100">
+                <Bell className="mr-1 h-3.5 w-3.5" /> Nudge Specialist
+              </Button>
+            </div>
+            <div className="rounded-lg bg-white p-3 border border-amber-200/80 text-xs text-slate-700">
+              <p className="font-semibold text-slate-900 mb-1">Clinical Question Sent:</p>
+              <p>{review.reason || "Clinical verification requested from specialist."}</p>
+            </div>
+            <div className="rounded-lg border border-dashed border-amber-300 p-4 text-center text-xs text-slate-400 bg-amber-50/40">
+              Draft will regenerate once specialist responds.
+            </div>
+          </Card>
+        ) : isSpecialistInputReceived ? (
+          /* §3.3 Specialist Input Received — Draft Regenerated */
+          <div className="space-y-4">
+            {/* Specialist Guidance Context */}
+            <Card className="border-emerald-200 bg-emerald-50/60">
+              <CardContent className="p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                  <span className="font-bold text-xs text-emerald-900">Specialist Guidance Received</span>
+                </div>
+                <div className="rounded-lg bg-white p-3 border border-emerald-200 text-xs text-slate-700">
+                  <p className="font-semibold text-slate-900 mb-1">Specialist Input:</p>
+                  <p className="leading-relaxed">{review.specialist_input || "Specialist guidance incorporated into draft."}</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Regenerated Draft */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-emerald-600" />
+                  <span className="font-bold text-xs text-slate-900">Regenerated Draft</span>
+                  <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px]">Updated with specialist input</Badge>
+                </div>
+                {!editing && canEdit && (
+                  <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
+                    Edit Further
+                  </Button>
+                )}
+              </div>
+
+              {editing ? (
+                <div className="space-y-2">
+                  <Textarea rows={8} value={draft} onChange={(e) => setDraft(e.target.value)} className="text-sm leading-relaxed" />
+                  <div className="flex gap-2">
+                    <Button size="sm" disabled={busy} onClick={() => runAction(() => editDraft(review.id, draft), "Draft updated.").then(() => setEditing(false))}>
+                      Save Changes
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => { setDraft(review.draft_body); setEditing(false); }}>
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="whitespace-pre-wrap rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-800 leading-relaxed">
+                  {review.draft_body || "No draft content available."}
+                </div>
+              )}
+
+              {/* Action buttons */}
+              <div className="flex flex-wrap gap-2 pt-2">
+                {canApprove && (
+                  <>
+                    <Button 
+                      size="sm" 
+                      disabled={busy} 
+                      onClick={() => setShowApproveConfirm(true)}
+                      className="bg-emerald-600 hover:bg-emerald-700"
+                    >
+                      <Check className="mr-1.5 h-4 w-4" /> Save to Gmail Draft
+                    </Button>
+                    {showApproveConfirm && (
+                      <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
+                        <Card className="border-slate-200 shadow-lg max-w-sm">
+                          <CardContent className="p-6 space-y-4">
+                            <div>
+                              <h3 className="font-bold text-slate-900">Save draft to Gmail?</h3>
+                              <p className="text-xs text-slate-500 mt-1">This creates a draft in your Gmail account. You can review it before sending.</p>
+                            </div>
+                            <div className="flex gap-2 justify-end border-t border-slate-100 pt-4">
+                              <Button size="sm" variant="outline" onClick={() => setShowApproveConfirm(false)} disabled={busy}>
+                                Cancel
+                              </Button>
+                              <Button 
+                                size="sm" 
+                                disabled={busy} 
+                                onClick={() => {
+                                  runAction(() => approveReview(review.id), "Draft saved to Gmail — ready to send.").then(() => setShowApproveConfirm(false));
+                                }}
+                                className="bg-emerald-600 hover:bg-emerald-700"
+                              >
+                                {busy ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Check className="mr-1.5 h-4 w-4" />}
+                                Confirm & Save
+                              </Button>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </div>
+                    )}
+                  </>
+                )}
+                {canEdit && (
+                  <Button size="sm" variant="outline" disabled={busy} onClick={() => runAction(() => rejectReview(review.id, "Rejected by FO"), "Draft rejected.")}>
+                    <X className="mr-1.5 h-4 w-4" /> Reject
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : isApproved ? (
+          /* §3.3 Approved — Ready to Send (Clear state distinction) */
+          <div className="space-y-4">
+            <Card className="border-emerald-200 bg-emerald-50/60">
+              <CardContent className="p-5 space-y-3">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                  <span className="font-bold text-sm text-emerald-900">Draft Ready in Gmail</span>
+                </div>
+                <p className="text-xs text-emerald-800">This draft is saved in your Gmail account. Review it one more time before sending to the patient.</p>
+                
+                {/* Show the final draft for reference */}
+                <div className="rounded-lg bg-white border border-emerald-200 p-3 text-xs text-slate-700">
+                  <p className="font-semibold text-slate-900 mb-2">Draft Preview:</p>
+                  <div className="whitespace-pre-wrap text-sm leading-relaxed">{review.draft_body}</div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Final send action */}
+            <div className="space-y-3 pt-2">
+              <p className="text-xs font-semibold text-slate-600">Ready to send to patient?</p>
+              <Button 
+                size="sm" 
+                disabled={busy} 
+                onClick={() => runAction(() => sendReview(review.id), "Email sent successfully to patient!")} 
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
+              >
+                {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+                Send Email to Patient
+              </Button>
+            </div>
+          </div>
+        ) : (
+          /* §3.3 Editable Draft Box */
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-blue-600" />
+                <span className="font-bold text-xs text-slate-900">AI Draft — Not Sent</span>
+              </div>
+              {!editing && canEdit && (
+                <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
+                  Edit Further
+                </Button>
+              )}
+            </div>
+
+            {editing ? (
+              <div className="space-y-2">
+                <Textarea rows={8} value={draft} onChange={(e) => setDraft(e.target.value)} className="text-sm leading-relaxed" />
+                <div className="flex gap-2">
+                  <Button size="sm" disabled={busy} onClick={() => runAction(() => editDraft(review.id, draft), "Draft updated.").then(() => setEditing(false))}>
+                    Save Changes
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => { setDraft(review.draft_body); setEditing(false); }}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="whitespace-pre-wrap rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-800 leading-relaxed">
+                {review.draft_body || "No draft content available."}
+              </div>
+            )}
+
+            {/* Action buttons */}
+            <div className="flex flex-wrap gap-2 pt-2">
+              {canApprove && (
+                <>
+                  <Button 
+                    size="sm" 
+                    disabled={busy} 
+                    onClick={() => setShowApproveConfirm(true)}
+                    className="bg-emerald-600 hover:bg-emerald-700"
+                  >
+                    <Check className="mr-1.5 h-4 w-4" /> Save to Gmail Draft
+                  </Button>
+                  {showApproveConfirm && (
+                    <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
+                      <Card className="border-slate-200 shadow-lg max-w-sm">
+                        <CardContent className="p-6 space-y-4">
+                          <div>
+                            <h3 className="font-bold text-slate-900">Save draft to Gmail?</h3>
+                            <p className="text-xs text-slate-500 mt-1">This creates a draft in your Gmail account. You can review it before sending.</p>
+                          </div>
+                          <div className="flex gap-2 justify-end border-t border-slate-100 pt-4">
+                            <Button size="sm" variant="outline" onClick={() => setShowApproveConfirm(false)} disabled={busy}>
+                              Cancel
+                            </Button>
+                            <Button 
+                              size="sm" 
+                              disabled={busy} 
+                              onClick={() => {
+                                runAction(() => approveReview(review.id), "Draft saved to Gmail — ready to send.").then(() => setShowApproveConfirm(false));
+                              }}
+                              className="bg-emerald-600 hover:bg-emerald-700"
+                            >
+                              {busy ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Check className="mr-1.5 h-4 w-4" />}
+                              Confirm & Save
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  )}
+                </>
+              )}
+              {canEdit && (
+                <Button size="sm" variant="outline" disabled={busy} onClick={() => runAction(() => rejectReview(review.id, "Rejected by FO"), "Draft rejected.")}>
+                  <X className="mr-1.5 h-4 w-4" /> Reject
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* §3.4 Context Panel (Right Pane ~320px) */}
+      <aside className="p-6 space-y-6 max-h-[calc(100vh-130px)] overflow-y-auto bg-slate-50/50">
+        <h3 className="font-bold text-xs uppercase tracking-wider text-slate-400">Context & Grounding</h3>
+
+        {/* Source Used / Citations */}
+        <div className="space-y-2">
+          <p className="text-xs font-semibold text-slate-700">Grounding Sources Used</p>
+          {review.citations && review.citations.length > 0 ? (
+            <div className="space-y-1.5">
+              {review.citations.map((c) => (
+                <a key={c.document_id} href={c.url ?? "#"} target="_blank" rel="noreferrer" className="block rounded-lg border border-slate-200 bg-white p-2.5 text-xs transition hover:border-emerald-300">
+                  <span className="font-bold text-slate-800">{c.title}</span>
+                  <p className="text-[10px] text-slate-400">{c.source}</p>
+                </a>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-slate-400">No external source cited.</p>
+          )}
+        </div>
+
+        {/* Match Confidence */}
+        <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-semibold text-slate-700">Match Confidence</span>
+            <span className="font-bold text-slate-900">{Math.round(review.confidence * 100)}%</span>
+          </div>
+          <div className="h-2 w-full rounded-full bg-slate-100 overflow-hidden">
+            <div className="h-full bg-emerald-500" style={{ width: `${Math.round(review.confidence * 100)}%` }} />
+          </div>
+          
+          {/* §3.4 Contextual explanation based on confidence level */}
+          <p className="text-[10px] text-slate-500">
+            {review.confidence >= 0.85
+              ? "Strong match — This draft was generated from highly similar policy documents in the knowledge base."
+              : review.confidence >= 0.65
+              ? "Good match — This draft draws from relevant but not identical policy guidance. Review for accuracy."
+              : review.confidence >= 0.45
+              ? "Moderate confidence — Consider reviewing the sources and adjusting the draft as needed."
+              : "Lower confidence — Manual review and editing recommended. Consider routing to specialist if uncertain."}
+          </p>
+        </div>
+
+        {/* Routing Trail */}
+        <div className="space-y-2">
+          <p className="text-xs font-semibold text-slate-700">Routing Trail</p>
+          <div className="space-y-1 text-xs text-slate-600">
+            <p>1. Ingested from Gmail Inbox</p>
+            <p>2. Classified as <span className="font-medium text-slate-800">{review.classification}</span></p>
+            <p>3. Routed to <span className="font-medium text-slate-800">{label(review.department)}</span></p>
+          </div>
+        </div>
+
+        {/* Who Can Send */}
+        <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
+          <p className="text-xs font-semibold text-slate-700">Send Rights Scope</p>
+          <div className="flex items-center gap-1.5 text-xs text-emerald-700 font-medium">
+            <UserCheck className="h-4 w-4" /> Front Office & Admin
+          </div>
+        </div>
+
+        {/* Internal Note & Collaboration Drawer */}
+        <CollaborationDrawer
+          emailId={review.id}
+          currentDepartment={review.department}
+          onReassigned={async () => { await onRefresh(); }}
+        />
+      </aside>
+    </div>
+  );
 }
-
-function Info({ label: heading, value }: { label: string; value: string }) { return <div className="rounded-lg border border-slate-200 bg-slate-50 p-3"><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{heading}</p><p className="mt-1 text-sm leading-5 text-slate-700">{value}</p></div>; }
-function DraftEditor({ value, editable, onChange, onEdit, onCancel, onSave, disabled }: { value: string; editable: boolean; onChange: (value: string) => void; onEdit: () => void; onCancel: () => void; onSave: () => void; disabled: boolean }) { return <div><div className="mb-2 flex items-center justify-between"><div><h3 className="font-semibold">Proposed reply</h3><p className="text-xs text-slate-500">Review every message before approval.</p></div>{value && !editable && <Button variant="outline" size="sm" onClick={onEdit}>Edit draft</Button>}</div>{value ? editable ? <><Textarea value={value} onChange={(event) => onChange(event.target.value)} rows={12} className="min-h-[260px] leading-6" /><div className="mt-2 flex gap-2"><Button size="sm" disabled={disabled || !value.trim()} onClick={onSave}>Save changes</Button><Button size="sm" variant="outline" onClick={onCancel}>Cancel</Button></div></> : <div className="whitespace-pre-wrap rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-700">{value}</div> : <Card className="border-dashed"><CardContent className="py-8 text-center text-sm text-slate-500">No AI draft is available for this email.</CardContent></Card>}</div>; }
-function SpecialistForm({ value, onChange, onSubmit, disabled }: { value: string; onChange: (value: string) => void; onSubmit: () => void; disabled: boolean }) { return <Card className="border-violet-200 bg-violet-50/50"><CardContent className="py-5"><div className="flex gap-3"><Stethoscope className="mt-0.5 h-5 w-5 text-violet-700" /><div><h3 className="font-semibold text-violet-950">Clinical guidance needed</h3><p className="mt-1 text-sm leading-6 text-violet-800">Add specialist guidance. The assistant will only use that guidance to prepare a reviewable reply.</p></div></div><Textarea value={value} onChange={(event) => onChange(event.target.value)} placeholder="Provide the approved clinical guidance for this response…" rows={7} className="mt-4 min-h-[160px]" /><Button disabled={disabled || !value.trim()} onClick={onSubmit} className="mt-3 bg-violet-700 hover:bg-violet-800">{disabled && <Loader2 className="h-4 w-4 animate-spin" />}Submit guidance</Button></CardContent></Card>; }
-function Sources({ citations }: { citations: Review["citations"] }) { return <div><h3 className="mb-2 font-semibold">Grounding sources</h3>{citations.length ? <div className="flex flex-wrap gap-2">{citations.map((citation) => <a key={citation.document_id} href={citation.url ?? undefined} target="_blank" rel="noreferrer" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 hover:border-emerald-300 hover:text-emerald-700"><span className="font-semibold uppercase tracking-wide text-slate-400">{citation.source}</span> · {citation.title}</a>)}</div> : <p className="text-sm text-slate-500">No source was used because this item was escalated or requires manual handling.</p>}</div>; }
-function Collaboration({ review, team, notes, note, setNote, busy, onAssign, onNote }: { review: Review; team: TeamMember[]; notes: ReviewNote[]; note: string; setNote: (value: string) => void; busy: boolean; onAssign: (value: string | null) => void; onNote: () => void }) { return <div className="border-t border-slate-100 pt-6"><div className="mb-3 flex items-center gap-2"><Users className="h-4 w-4 text-slate-500" /><h3 className="font-semibold">Team coordination</h3></div><div className="grid gap-5 xl:grid-cols-2"><div><label className="text-xs font-medium text-slate-500">Assigned staff member</label><div className="relative mt-1"><select value={review.assigned_to ?? ""} onChange={(event) => onAssign(event.target.value || null)} disabled={busy} className="w-full appearance-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"><option value="">Unassigned</option>{team.map((member) => <option key={member.id} value={member.id}>{member.full_name || member.email} · {label(member.role)}</option>)}</select><ChevronDown className="pointer-events-none absolute right-3 top-2.5 h-4 w-4 text-slate-400" /></div></div><div><label className="text-xs font-medium text-slate-500">Internal note</label><div className="mt-1 flex gap-2"><input value={note} onChange={(event) => setNote(event.target.value)} placeholder="Add a hand-off note" className="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm" /><Button size="sm" disabled={busy || !note.trim()} onClick={onNote}>Add</Button></div></div></div>{notes.length > 0 && <div className="mt-4 space-y-2">{notes.map((item) => <div key={item.id} className="rounded-lg bg-slate-50 px-3 py-2 text-sm"><span className="font-medium text-slate-700">Team note</span><span className="ml-2 text-xs text-slate-400">{formatTime(item.created_at)}</span><p className="mt-1 text-slate-600">{item.body}</p></div>)}</div>}</div>; }

@@ -196,3 +196,8 @@ def pull_all_connected_task(max_results: int = 12) -> dict:
         account_count=len(user_account_pairs),
     )
     return {"enqueued": len(user_account_pairs)}
+
+
+# Alias for backward compatibility
+pull_gmail_task = pull_messages_task
+

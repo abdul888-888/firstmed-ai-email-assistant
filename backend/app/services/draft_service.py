@@ -19,7 +19,6 @@ from app.models.document import DocumentSource
 from app.models.template import Template
 from app.models.user import User
 from app.repositories.template import TemplateRepository
-from app.services.gmail_service import GmailService
 from app.services.search_service import ScoredDocument, SearchService, tokenize
 
 logger = get_logger(__name__)

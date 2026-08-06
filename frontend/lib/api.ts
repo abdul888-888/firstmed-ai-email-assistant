@@ -272,3 +272,109 @@ export function getPullGmailStatus(taskId: string): Promise<PullTaskStatus> {
 export function getIndexStats(): Promise<IndexStats> {
   return apiFetch<IndexStats>({ path: `/search/stats` });
 }
+
+/* --------------------------------------------------------------------------
+ * Auth & 2FA (§2 Login)
+ * ----------------------------------------------------------------------- */
+
+export type LoginResponse = {
+  access_token: string;
+  token_type: string;
+  requires_2fa: boolean;
+  challenge_id?: string | null;
+  role?: string | null;
+  redirect_url?: string | null;
+};
+
+export async function loginWithEmailPassword(email: string, password: string): Promise<LoginResponse> {
+  const formData = new URLSearchParams();
+  formData.append("username", email);
+  formData.append("password", password);
+
+  const res = await fetch(`${API_V1}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: formData.toString(),
+  });
+
+  const body = await res.json().catch(() => ({ detail: "Login failed" }));
+  if (!res.ok) throw new ApiError(body?.detail || "Invalid email or password", res.status);
+  return body as LoginResponse;
+}
+
+export function verify2FACode(challengeId: string, code: string): Promise<LoginResponse> {
+  return apiFetch<LoginResponse>({
+    path: `/auth/2fa/verify`,
+    method: "POST",
+    body: JSON.stringify({ challenge_id: challengeId, code }),
+  });
+}
+
+export function setInvitePassword(token: string, password: string): Promise<LoginResponse> {
+  return apiFetch<LoginResponse>({
+    path: `/auth/invite/set-password`,
+    method: "POST",
+    body: JSON.stringify({ token, password }),
+  });
+}
+
+/* --------------------------------------------------------------------------
+ * Needs Attention Dashboard (§5)
+ * ----------------------------------------------------------------------- */
+
+export type KnowledgeGap = {
+  id: string;
+  topic: string;
+  occurrences: number;
+  escalated: boolean;
+  escalated_to: string | null;
+  last_asked: string;
+};
+
+export type StalledItem = {
+  id: string;
+  sender: string;
+  subject: string;
+  waiting_on: string;
+  elapsed_hours: number;
+  sla_limit_hours: number;
+  nudge_sent: boolean;
+  status: string;
+};
+
+export type TriageItem = {
+  id: string;
+  sender: string;
+  subject: string;
+  summary: string;
+  confidence: number;
+  suggested_action: "archive" | "queue";
+};
+
+export function getKnowledgeGaps(): Promise<{ gaps: KnowledgeGap[]; count: number }> {
+  return apiFetch<{ gaps: KnowledgeGap[]; count: number }>({ path: `/workflows/knowledge-gaps` });
+}
+
+export function getStalledItems(): Promise<{ stalled: StalledItem[]; count: number }> {
+  return apiFetch<{ stalled: StalledItem[]; count: number }>({ path: `/workflows/stalled-items` });
+}
+
+export function sendNudge(reviewId: string): Promise<{ success: boolean; message: string }> {
+  return apiFetch<{ success: boolean; message: string }>({
+    path: `/workflows/nudge/${reviewId}`,
+    method: "POST",
+  });
+}
+
+export function getTriageItems(): Promise<{ items: TriageItem[]; count: number }> {
+  return apiFetch<{ items: TriageItem[]; count: number }>({ path: `/workflows/triage-items` });
+}
+
+export function performTriageAction(itemId: string, action: "accept" | "reject"): Promise<{ success: boolean }> {
+  return apiFetch<{ success: boolean }>({
+    path: `/workflows/triage-action`,
+    method: "POST",
+    body: JSON.stringify({ item_id: itemId, action }),
+  });
+}
+

@@ -181,3 +181,105 @@ async def add_note(
     review = await _load_review(review_id, session)
     note = await CollaborationService(session).add_note(review, current_user, payload.body)
     return ReviewNoteRead.model_validate(note)
+
+
+# --- Routing Rules & Audit Log (Design Spec §6) ---
+
+_IN_MEMORY_ROUTING_RULES = [
+    {"id": "rule-1", "category": "Pricing & Insurance", "target_queue": "front_office", "condition": "auto_match", "enabled": True},
+    {"id": "rule-2", "category": "Lab & Pathology", "target_queue": "laboratory", "condition": "lab_results_safety_suppression", "enabled": True},
+    {"id": "rule-3", "category": "Physiotherapy Scheduling", "target_queue": "physiotherapy", "condition": "direct_booking", "enabled": True},
+    {"id": "rule-4", "category": "Clinical Specialist Query", "target_queue": "nurse_specialist", "condition": "triage_required", "enabled": True},
+]
+
+_IN_MEMORY_AUDIT_LOG = [
+    {"id": "log-101", "actor": "Admin (system)", "action": "ROUTING_RULE_UPDATED", "target": "Lab & Pathology", "timestamp": "2026-08-06T14:10:00Z", "details": "Enabled safety suppression rule"},
+    {"id": "log-102", "actor": "Front Office", "action": "DRAFT_APPROVED", "target": "Msg #942", "timestamp": "2026-08-06T14:25:00Z", "details": "Approved GP pricing reply"},
+    {"id": "log-103", "actor": "Dr. Sarah", "action": "SPECIALIST_GUIDANCE_ADDED", "target": "Msg #945", "timestamp": "2026-08-06T14:40:00Z", "details": "Provided physio recovery plan"},
+]
+
+
+@router.get("/routing-rules", summary="List routing rules (Admin only)")
+async def list_routing_rules(
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> dict:
+    return {"rules": _IN_MEMORY_ROUTING_RULES, "count": len(_IN_MEMORY_ROUTING_RULES)}
+
+
+@router.post("/routing-rules", summary="Add routing rule (Admin only)")
+async def create_routing_rule(
+    payload: dict,
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> dict:
+    new_rule = {
+        "id": f"rule-{uuid.uuid4().hex[:6]}",
+        "category": payload.get("category", "General"),
+        "target_queue": payload.get("target_queue", "front_office"),
+        "condition": payload.get("condition", "auto_match"),
+        "enabled": payload.get("enabled", True),
+    }
+    _IN_MEMORY_ROUTING_RULES.append(new_rule)
+    _IN_MEMORY_AUDIT_LOG.insert(0, {
+        "id": f"log-{uuid.uuid4().hex[:6]}",
+        "actor": current_user.full_name or current_user.email,
+        "action": "ROUTING_RULE_CREATED",
+        "target": new_rule["category"],
+        "timestamp": "2026-08-06T15:00:00Z",
+        "details": f"Created rule mapping to {new_rule['target_queue']}",
+    })
+    return new_rule
+
+
+@router.put("/routing-rules/{rule_id}", summary="Update routing rule (Admin only)")
+async def update_routing_rule(
+    rule_id: str,
+    payload: dict,
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> dict:
+    for rule in _IN_MEMORY_ROUTING_RULES:
+        if rule["id"] == rule_id:
+            rule.update({k: v for k, v in payload.items() if v is not None})
+            return rule
+    raise HTTPException(status_code=404, detail="Routing rule not found")
+
+
+@router.delete("/routing-rules/{rule_id}", summary="Delete routing rule (Admin only)")
+async def delete_routing_rule(
+    rule_id: str,
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> dict:
+    global _IN_MEMORY_ROUTING_RULES
+    _IN_MEMORY_ROUTING_RULES = [r for r in _IN_MEMORY_ROUTING_RULES if r["id"] != rule_id]
+    return {"success": True}
+
+
+@router.get("/audit-log", summary="Get audit log feed (Admin only)")
+async def get_audit_log(
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> dict:
+    return {"logs": _IN_MEMORY_AUDIT_LOG, "count": len(_IN_MEMORY_AUDIT_LOG)}
+
+
+@router.post("/users/invite", summary="Invite a new staff member (Admin only)")
+async def invite_user(
+    payload: dict,
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> dict:
+    email = payload.get("email", "").strip()
+    role = payload.get("role", "FRONT_OFFICE")
+    if not email:
+        raise HTTPException(status_code=400, detail="Email is required")
+    
+    invite_token = f"invite_{uuid.uuid4().hex[:12]}"
+    invite_link = f"/login?invite_token={invite_token}&email={email}"
+    
+    _IN_MEMORY_AUDIT_LOG.insert(0, {
+        "id": f"log-{uuid.uuid4().hex[:6]}",
+        "actor": current_user.full_name or current_user.email,
+        "action": "STAFF_INVITED",
+        "target": email,
+        "timestamp": "2026-08-06T15:10:00Z",
+        "details": f"Invited with role {role}",
+    })
+    return {"success": True, "email": email, "invite_token": invite_token, "invite_link": invite_link}
+

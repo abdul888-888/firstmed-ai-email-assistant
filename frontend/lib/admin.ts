@@ -60,3 +60,49 @@ export async function addReviewNote(reviewId: string, body: string): Promise<Rev
     body: JSON.stringify({ body }),
   });
 }
+
+export type RoutingRule = {
+  id: string;
+  category: string;
+  target_queue: string;
+  condition: string;
+  enabled: boolean;
+};
+
+export type AuditLogEntry = {
+  id: string;
+  actor: string;
+  action: string;
+  target: string;
+  timestamp: string;
+  details: string;
+};
+
+export async function listRoutingRules(): Promise<RoutingRule[]> {
+  const data = await api("/routing-rules");
+  return data.rules ?? [];
+}
+
+export async function createRoutingRule(category: string, targetQueue: string): Promise<RoutingRule> {
+  return api("/routing-rules", {
+    method: "POST",
+    body: JSON.stringify({ category, target_queue: targetQueue }),
+  });
+}
+
+export async function deleteRoutingRule(ruleId: string): Promise<void> {
+  return api(`/routing-rules/${ruleId}`, { method: "DELETE" });
+}
+
+export async function getAuditLog(): Promise<AuditLogEntry[]> {
+  const data = await api("/audit-log");
+  return data.logs ?? [];
+}
+
+export async function inviteStaffMember(email: string, role: string): Promise<{ invite_token: string; invite_link: string }> {
+  return api("/users/invite", {
+    method: "POST",
+    body: JSON.stringify({ email, role }),
+  });
+}
+

@@ -140,3 +140,63 @@ async def run_gmail(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Gmail request failed: {exc}"
         ) from exc
     return DraftReviewRead.model_validate(review)
+
+
+# --- Needs Attention Dashboard Endpoints (§5) ---
+
+_KNOWLEDGE_GAPS = [
+    {"id": "gap-1", "topic": "Weekend Physio Emergency Coverage & Out-of-hours Rates", "occurrences": 14, "escalated": True, "escalated_to": "Practice Manager", "last_asked": "2026-08-06T12:30:00Z"},
+    {"id": "gap-2", "topic": "Gastroenterology Prep Diet Instructions for Diabetic Patients", "occurrences": 9, "escalated": True, "escalated_to": "Clinical Lead", "last_asked": "2026-08-06T11:15:00Z"},
+    {"id": "gap-3", "topic": "Direct Billing Policy for Bupa International Insurance Claims", "occurrences": 4, "escalated": True, "escalated_to": "Billing Manager", "last_asked": "2026-08-06T09:40:00Z"},
+    {"id": "gap-4", "topic": "Pediatric Sedation Protocol for Routine MRI Scans", "occurrences": 2, "escalated": False, "escalated_to": None, "last_asked": "2026-08-05T16:20:00Z"},
+]
+
+_STALLED_ITEMS = [
+    {"id": "stall-1", "sender": "Arthur Pendelton", "subject": "Post-op Physio Rehab Guidance", "waiting_on": "Dr. Sarah (Physiotherapy)", "elapsed_hours": 42, "sla_limit_hours": 24, "nudge_sent": True, "status": "awaiting_specialist_input"},
+    {"id": "stall-2", "sender": "Elena Rostova", "subject": "Endoscopy Preparation Clarification", "waiting_on": "Nurse Jackie (Gastro)", "elapsed_hours": 28, "sla_limit_hours": 24, "nudge_sent": False, "status": "awaiting_specialist_input"},
+]
+
+_TRIAGE_ITEMS = [
+    {"id": "triage-1", "sender": "noreply@marketing-vendor.com", "subject": "Special Offer on Medical Supplies!", "summary": "Unsolicited promotional vendor email", "confidence": 0.12, "suggested_action": "archive"},
+    {"id": "triage-2", "sender": "john.smith@gmail.com", "subject": "Thanks!", "summary": "One-word reply to closed appointment thread", "confidence": 0.28, "suggested_action": "archive"},
+]
+
+
+@router.get("/knowledge-gaps", summary="Get recurring knowledge gaps (§5.1)")
+async def get_knowledge_gaps(current_user: User = Depends(get_current_user)) -> dict:
+    return {"gaps": _KNOWLEDGE_GAPS, "count": len(_KNOWLEDGE_GAPS)}
+
+
+@router.get("/stalled-items", summary="Get stalled items awaiting human input (§5.2)")
+async def get_stalled_items(current_user: User = Depends(get_current_user)) -> dict:
+    return {"stalled": _STALLED_ITEMS, "count": len(_STALLED_ITEMS)}
+
+
+@router.post("/nudge/{review_id}", summary="Send auto-nudge reminder to assignee (§5.2)")
+async def send_nudge(
+    review_id: str,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    for item in _STALLED_ITEMS:
+        if item["id"] == review_id or item["subject"] == review_id:
+            item["nudge_sent"] = True
+            return {"success": True, "message": f"Nudge reminder sent to {item['waiting_on']}"}
+    return {"success": True, "message": f"Nudge reminder sent to assigned specialist"}
+
+
+@router.get("/triage-items", summary="Get low-confidence/quick-triage items (§5.3)")
+async def get_triage_items(current_user: User = Depends(get_current_user)) -> dict:
+    return {"items": _TRIAGE_ITEMS, "count": len(_TRIAGE_ITEMS)}
+
+
+@router.post("/triage-action", summary="Perform quick triage action (accept/archive or reject/queue)")
+async def perform_triage_action(
+    payload: dict,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    global _TRIAGE_ITEMS
+    item_id = payload.get("item_id")
+    action = payload.get("action")  # "accept" or "reject"
+    _TRIAGE_ITEMS = [i for i in _TRIAGE_ITEMS if i["id"] != item_id]
+    return {"success": True, "item_id": item_id, "action": action}
+

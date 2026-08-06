@@ -1,0 +1,220 @@
+"use client";
+
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { KeyRound, Loader2, Lock, Mail, ShieldCheck, Stethoscope } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { loginWithEmailPassword, setInvitePassword, verify2FACode } from "@/lib/api";
+import { setToken } from "@/lib/auth";
+
+function LoginForm() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const inviteToken = searchParams.get("invite_token");
+  const inviteEmail = searchParams.get("email") || "";
+
+  const [isInviteFlow, setIsInviteFlow] = useState(Boolean(inviteToken));
+  const [email, setEmail] = useState(inviteEmail);
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+
+  // 2FA state
+  const [requires2FA, setRequires2FA] = useState(false);
+  const [challengeId, setChallengeId] = useState<string | null>(null);
+  const [twoFactorCode, setTwoFactorCode] = useState("");
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (inviteToken) setIsInviteFlow(true);
+  }, [inviteToken]);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+
+    try {
+      if (isInviteFlow && inviteToken) {
+        if (password.length < 8) {
+          setError("Password must be at least 8 characters");
+          setLoading(false);
+          return;
+        }
+        if (password !== confirmPassword) {
+          setError("Passwords do not match");
+          setLoading(false);
+          return;
+        }
+        const res = await setInvitePassword(inviteToken, password);
+        setToken(res.access_token);
+        router.push(res.redirect_url || "/reviews");
+        return;
+      }
+
+      const res = await loginWithEmailPassword(email, password);
+      if (res.requires_2fa && res.challenge_id) {
+        setRequires2FA(true);
+        setChallengeId(res.challenge_id);
+        setLoading(false);
+        return;
+      }
+
+      setToken(res.access_token);
+      router.push(res.redirect_url || "/reviews");
+    } catch (err) {
+      // Generic error as required by §2 (standard security practice)
+      setError("Invalid email or password.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handle2FAVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!challengeId || twoFactorCode.length !== 6) {
+      setError("Please enter a valid 6-digit code.");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const res = await verify2FACode(challengeId, twoFactorCode);
+      setToken(res.access_token);
+      router.push(res.redirect_url || "/reviews");
+    } catch (err) {
+      setError("Invalid 2FA code. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-12">
+      <div className="w-full max-w-md space-y-6">
+        {/* Header Branding */}
+        <div className="flex flex-col items-center text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-900 shadow-lg">
+            <Stethoscope className="h-6 w-6 text-emerald-400" />
+          </div>
+          <h1 className="mt-4 text-2xl font-bold tracking-tight text-slate-900">FirstMed Assistant</h1>
+          <p className="mt-1 text-sm text-slate-500">Clinical Inbox & AI Review Console</p>
+        </div>
+
+        <Card className="border-slate-200 shadow-xl">
+          <CardHeader>
+            <CardTitle>{requires2FA ? "Admin 2FA Verification" : isInviteFlow ? "Set Your Password" : "Log In"}</CardTitle>
+            <CardDescription>
+              {requires2FA
+                ? "Enter the 6-digit verification code sent to your authenticator app."
+                : isInviteFlow
+                ? "Set a secure password for your invited staff account."
+                : "Enter your clinic credentials to access your primary workspace."}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {error && <div className="mb-4 rounded-md bg-rose-50 p-3 text-sm font-medium text-rose-700">{error}</div>}
+
+            {requires2FA ? (
+              <form onSubmit={handle2FAVerify} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="2fa-code">Verification Code</Label>
+                  <div className="relative">
+                    <KeyRound className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+                    <Input
+                      id="2fa-code"
+                      type="text"
+                      maxLength={6}
+                      placeholder="123456"
+                      value={twoFactorCode}
+                      onChange={(e) => setTwoFactorCode(e.target.value)}
+                      className="pl-9 text-center text-lg tracking-widest"
+                      required
+                      autoFocus
+                    />
+                  </div>
+                </div>
+                <Button type="submit" disabled={loading || twoFactorCode.length !== 6} className="w-full bg-emerald-600 hover:bg-emerald-700">
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4 mr-2" />}
+                  Verify & Log In
+                </Button>
+              </form>
+            ) : (
+              <form onSubmit={handleLogin} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="email">Email address</Label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+                    <Input
+                      id="email"
+                      type="email"
+                      placeholder="staff@firstmed.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="pl-9"
+                      required
+                      disabled={isInviteFlow && Boolean(inviteEmail)}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="password">{isInviteFlow ? "New Password" : "Password"}</Label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+                    <Input
+                      id="password"
+                      type="password"
+                      placeholder="••••••••"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="pl-9"
+                      required
+                    />
+                  </div>
+                </div>
+
+                {isInviteFlow && (
+                  <div className="space-y-2">
+                    <Label htmlFor="confirm-password">Confirm Password</Label>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+                      <Input
+                        id="confirm-password"
+                        type="password"
+                        placeholder="••••••••"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        className="pl-9"
+                        required
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <Button type="submit" disabled={loading} className="w-full bg-slate-900 hover:bg-slate-800">
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : isInviteFlow ? "Set Password & Enter" : "Log In"}
+                </Button>
+              </form>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="flex min-h-screen items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>}>
+      <LoginForm />
+    </Suspense>
+  );
+}

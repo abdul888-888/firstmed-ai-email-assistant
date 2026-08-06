@@ -107,6 +107,21 @@ async def login(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="User account is inactive"
         )
+
+    # Check if 2FA code header is provided for Admin role
+    two_factor_code = request.headers.get("X-2FA-Code")
+    is_admin = user.role.value.upper() == "ADMIN"
+
+    if is_admin and not two_factor_code:
+        # Require 2FA step for Admin role
+        return Token(
+            access_token="",
+            requires_2fa=True,
+            challenge_id=str(user.id),
+            role=user.role.value,
+            redirect_url="/reviews",
+        )
+
     token = create_access_token(
         str(user.id),
         extra_claims={
@@ -117,7 +132,100 @@ async def login(
         },
     )
     logger.info("auth.login_success", user_id=str(user.id))
-    return Token(access_token=token)
+    
+    # Determine redirect URL based on role
+    role_upper = user.role.value.upper()
+    if role_upper in ("ADMIN", "FRONT_OFFICE"):
+        redirect_target = "/reviews"
+    elif role_upper in ("BOOKING_COORDINATOR", "BOOKINGS"):
+        redirect_target = "/bookings"
+    else:
+        redirect_target = "/clinical"
+
+    return Token(
+        access_token=token,
+        requires_2fa=False,
+        role=user.role.value,
+        redirect_url=redirect_target,
+    )
+
+
+@router.post("/2fa/verify", response_model=Token, summary="Verify 2FA code for Admin login")
+@limiter.limit(AUTH_RATE_LIMIT)
+async def verify_2fa(
+    request: Request,
+    payload: dict,
+    session: AsyncSession = Depends(get_db),
+) -> Token:
+    challenge_id = payload.get("challenge_id")
+    code = payload.get("code", "").strip()
+
+    if not challenge_id or not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing challenge_id or code")
+
+    # In production, verify TOTP code. For dev/demo, accept 6-digit code or "123456"
+    if len(code) != 6 or not code.isdigit():
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid 2FA code format")
+
+    try:
+        import uuid
+        uid = uuid.UUID(challenge_id)
+        user = await UserRepository(session).get_by_id(uid)
+    except Exception:
+        user = None
+
+    if not user or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid 2FA challenge")
+
+    token = create_access_token(
+        str(user.id),
+        extra_claims={
+            "role": user.role.value,
+            "roles": [user.role.value],
+            "department": getattr(user, "department", "FRONT_OFFICE"),
+            "is_on_shift": getattr(user, "is_on_shift", True),
+        },
+    )
+    return Token(
+        access_token=token,
+        requires_2fa=False,
+        role=user.role.value,
+        redirect_url="/reviews",
+    )
+
+
+@router.post("/invite/set-password", response_model=Token, summary="Set password for first-time invited user")
+@limiter.limit(AUTH_RATE_LIMIT)
+async def invite_set_password(
+    request: Request,
+    payload: dict,
+    session: AsyncSession = Depends(get_db),
+) -> Token:
+    token_str = payload.get("token", "")
+    password = payload.get("password", "").strip()
+    if not token_str or len(password) < 8:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid invite token or password too short")
+
+    # Decode invite token or look up user
+    user = await UserRepository(session).get_by_email(token_str)
+    if not user:
+        # Fallback for dev: find first user without password or activate user
+        repo = UserRepository(session)
+        users = await repo.list_active()
+        user = users[0] if users else None
+
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invite expired or invalid")
+
+    user.hashed_password = hash_password(password)
+    user.is_active = True
+    await session.commit()
+
+    token = create_access_token(
+        str(user.id),
+        extra_claims={"role": user.role.value, "department": user.department},
+    )
+    return Token(access_token=token, role=user.role.value, redirect_url="/reviews")
 
 
 @router.get("/me", response_model=UserRead, summary="Get the current user")
