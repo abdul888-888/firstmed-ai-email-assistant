@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Activity,
   CheckCircle2,
@@ -34,6 +35,8 @@ import {
 import { getKnowledgeGaps, type KnowledgeGap } from "@/lib/api";
 
 export default function AdminDashboardPage() {
+  const router = useRouter();
+  const [isAuthorized, setIsAuthorized] = useState(false);
   const [users, setUsers] = useState<TeamMember[]>([]);
   const [rules, setRules] = useState<RoutingRule[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
@@ -77,8 +80,43 @@ export default function AdminDashboardPage() {
   };
 
   useEffect(() => {
-    void loadData();
-  }, []);
+    // Check if user has admin role before loading data
+    const checkAuthorization = async () => {
+      try {
+        const token = localStorage.getItem("token");
+        if (!token) {
+          router.push("/login");
+          return;
+        }
+
+        const response = await fetch("/api/v1/auth/me", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!response.ok) {
+          router.push("/login");
+          return;
+        }
+
+        const user = await response.json();
+        // Check if user role is admin (case-insensitive)
+        if (user.role && user.role.toLowerCase() === "admin") {
+          setIsAuthorized(true);
+          await loadData();
+        } else {
+          // Not authorized, redirect to /reviews
+          router.push("/reviews");
+        }
+      } catch (err) {
+        console.error("Authorization check failed:", err);
+        router.push("/login");
+      }
+    };
+
+    void checkAuthorization();
+  }, [router]);
 
   const handleInviteStaff = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -113,6 +151,21 @@ export default function AdminDashboardPage() {
       alert("Failed to delete routing rule");
     }
   };
+
+  // Show loading or unauthorized message
+  if (!isAuthorized) {
+    return (
+      <DashboardLayout>
+        <div className="flex min-h-screen items-center justify-center bg-slate-50">
+          <div className="text-center">
+            <Shield className="mx-auto h-12 w-12 text-slate-400" />
+            <h2 className="mt-4 text-lg font-semibold text-slate-900">Access Denied</h2>
+            <p className="mt-1 text-sm text-slate-500">You do not have permission to access the Admin Dashboard.</p>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
