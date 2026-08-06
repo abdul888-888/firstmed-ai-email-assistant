@@ -14,18 +14,18 @@ from app.models.base import Base, TimestampMixin
 class UserRole(str, enum.Enum):
     """Staff roles, mirroring the PRD 'User Roles' section."""
 
-    ADMIN = "ADMIN"
-    FRONT_OFFICE = "FRONT_OFFICE"
-    PHYSIOTHERAPY = "PHYSIOTHERAPY"
-    GASTROENTEROLOGY = "GASTROENTEROLOGY"
-    LABORATORY = "LABORATORY"
-    NURSE_SPECIALIST = "NURSE_SPECIALIST"
+    ADMIN = "admin"
+    FRONT_OFFICE = "front_office"
+    PHYSIOTHERAPY = "physiotherapy"
+    GASTROENTEROLOGY = "gastroenterology"
+    LABORATORY = "laboratory"
+    NURSE_SPECIALIST = "nurse_specialist"
 
     # Backward compatibility aliases
-    admin = "ADMIN"
-    front_office = "FRONT_OFFICE"
-    nurse = "NURSE_SPECIALIST"
-    specialist = "PHYSIOTHERAPY"
+    admin = "admin"
+    front_office = "front_office"
+    nurse = "nurse_specialist"
+    specialist = "physiotherapy"
 
 
 class User(Base, TimestampMixin):
