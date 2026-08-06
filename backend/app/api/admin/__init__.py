@@ -28,6 +28,7 @@ from app.schemas.collaboration import (
 from app.schemas.review import DraftReviewRead
 from app.schemas.user import UserCreate, UserList, UserRead, UserUpdate
 from app.core.security import hash_password
+from app.services.collaboration_service import CollaborationService
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 logger = get_logger(__name__)
