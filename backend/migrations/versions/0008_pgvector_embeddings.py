@@ -15,8 +15,8 @@ from app.core.config import settings
 from pgvector.sqlalchemy import Vector
 
 # revision identifiers, used by Alembic.
-revision: str = "0008_pgvector_embeddings"
-down_revision: str | None = "0007_templates"
+revision: str = "0008"
+down_revision: str | None = "0007"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
