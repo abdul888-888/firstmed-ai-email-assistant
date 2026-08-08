@@ -26,4 +26,4 @@ EXPOSE 8000
 
 # Default command: run FastAPI (Railway uses $PORT env var)
 # Note: Run migrations manually first, then start API
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "python run_migrations.py && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} || tail -f /dev/null"]
