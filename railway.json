@@ -8,7 +8,7 @@
     "restartPolicyMaxRetries": 10,
     "services": {
       "api": {
-        "startCommand": "sh -c 'for i in 1 2 3 4 5; do alembic upgrade head && break || (echo \"Attempt $i failed, retrying in 10s...\" && sleep 10); done && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}'"
+        "startCommand": "sh -c 'uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}'"
       },
       "worker": {
         "startCommand": "sh -c 'celery -A app.workers.celery_app.celery_app worker --loglevel=info --concurrency=4'"
