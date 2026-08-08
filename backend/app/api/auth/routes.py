@@ -134,7 +134,9 @@ async def login(
     
     # Determine redirect URL based on role
     role_upper = user.role.value.upper()
-    if role_upper in ("ADMIN", "FRONT_OFFICE"):
+    if role_upper == "ADMIN":
+        redirect_target = "/admin"
+    elif role_upper == "FRONT_OFFICE":
         redirect_target = "/reviews"
     elif role_upper in ("BOOKING_COORDINATOR", "BOOKINGS"):
         redirect_target = "/bookings"
