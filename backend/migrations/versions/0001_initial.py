@@ -29,10 +29,12 @@ def upgrade() -> None:
         sa.Column(
             "role",
             sa.Enum(
-                "front_office",
-                "nurse",
-                "specialist",
-                "admin",
+                "ADMIN",
+                "FRONT_OFFICE",
+                "PHYSIOTHERAPY",
+                "GASTROENTEROLOGY",
+                "LABORATORY",
+                "NURSE_SPECIALIST",
                 name="user_role",
             ),
             nullable=False,

@@ -20,11 +20,57 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Normalize all user role values to uppercase."""
-    # Update any lowercase role values to their uppercase equivalents
-    op.execute(sa.text("UPDATE users SET role = UPPER(role) WHERE role != UPPER(role)"))
+    """Rebuild user_role enum with uppercase values and convert existing data."""
+    # Drop the old enum constraint
+    op.execute(sa.text("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check CASCADE"))
+    
+    # Create a temporary column to store the data
+    op.add_column("users", sa.Column("role_temp", sa.String(50), nullable=True))
+    
+    # Copy data with case conversion
+    op.execute(sa.text("""
+        UPDATE users 
+        SET role_temp = CASE 
+            WHEN role = 'admin' THEN 'ADMIN'
+            WHEN role = 'front_office' THEN 'FRONT_OFFICE'
+            WHEN role = 'nurse' THEN 'NURSE_SPECIALIST'
+            WHEN role = 'specialist' THEN 'PHYSIOTHERAPY'
+            ELSE role
+        END
+    """))
+    
+    # Drop the old role column
+    op.drop_column("users", "role")
+    
+    # Rename temp column to role
+    op.alter_column("users", "role_temp", new_column_name="role")
+    
+    # Recreate the enum type with uppercase values
+    op.execute(sa.text("DROP TYPE IF EXISTS user_role CASCADE"))
+    op.execute(sa.text("""
+        CREATE TYPE user_role AS ENUM (
+            'ADMIN',
+            'FRONT_OFFICE',
+            'PHYSIOTHERAPY',
+            'GASTROENTEROLOGY',
+            'LABORATORY',
+            'NURSE_SPECIALIST'
+        )
+    """))
+    
+    # Convert role column back to enum
+    op.alter_column("users", "role", type_=sa.Enum(
+        "ADMIN",
+        "FRONT_OFFICE",
+        "PHYSIOTHERAPY",
+        "GASTROENTEROLOGY",
+        "LABORATORY",
+        "NURSE_SPECIALIST",
+        name="user_role"
+    ))
 
 
 def downgrade() -> None:
-    """Revert user role values to lowercase (not recommended)."""
-    op.execute(sa.text("UPDATE users SET role = LOWER(role) WHERE role = UPPER(role)"))
+    """Revert to lowercase enum (not recommended)."""
+    pass
+
