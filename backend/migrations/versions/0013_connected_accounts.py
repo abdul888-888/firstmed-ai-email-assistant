@@ -47,8 +47,8 @@ from alembic import op
 # ---------------------------------------------------------------------------
 # Revision identifiers — used by Alembic's revision chain.
 # ---------------------------------------------------------------------------
-revision: str = "0013_connected_accounts"
-down_revision: str | None = "0012_gmail_history_id"
+revision: str = "0013"
+down_revision: str | None = "0012"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

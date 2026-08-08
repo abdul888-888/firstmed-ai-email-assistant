@@ -84,9 +84,12 @@ class Settings(BaseSettings):
     healzz_api_key: SecretStr = SecretStr("")
 
     # --- AI (Phase 5) ---
+    # Supports Anthropic Claude and Groq Llama models
+    # Set ANTHROPIC_API_KEY for Claude, GROQ_API_KEY for Groq
+    # Model auto-detection: claude-* uses Anthropic, llama-*/mixtral-* uses Groq
     groq_api_key: SecretStr = SecretStr("")
     anthropic_api_key: SecretStr = SecretStr("")
-    ai_model: str = "llama-3.3-70b-versatile"
+    ai_model: str = "claude-3-5-sonnet-20241022"  # Changed from Groq default for consistency
     ai_max_tokens: int = 4096
     anthropic_baa_signed: bool = False
 

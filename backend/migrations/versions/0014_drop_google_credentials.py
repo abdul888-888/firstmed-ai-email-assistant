@@ -1,7 +1,7 @@
 """Drop google_credentials table (Phase 5 cleanup).
 
 Revision ID: 0014
-Revises: 0013_connected_accounts
+Revises: 0013
 Create Date: 2024-08-02 00:00:00.000000
 """
 

@@ -5,9 +5,16 @@ Set up admin users for the FirstMed backend.
 Usage:
     cd backend
     source .venv/bin/activate  # or .venv\Scripts\Activate.ps1 on Windows
-    python -m scripts.setup_admin_user <email> [name]
+    python scripts/setup_admin_user.py <email> [name] [database_url]
 
 This script creates or updates a user with the ADMIN role.
+
+Examples:
+    # Local development (SQLite)
+    python scripts/setup_admin_user.py admin@example.com "Admin User"
+    
+    # Production/Staging (PostgreSQL on Railway)
+    python scripts/setup_admin_user.py admin@example.com "Admin User" "postgresql://user:pass@host:port/db"
 """
 
 import asyncio
@@ -26,9 +33,14 @@ from app.models.user import User, UserRole
 from app.core.security import hash_password
 
 
-async def setup_admin_user(email: str, full_name: str | None = None) -> None:
+async def setup_admin_user(email: str, full_name: str | None = None, database_url: str | None = None) -> None:
     """Create or update a user with ADMIN role."""
-    engine = create_async_engine(settings.sqlalchemy_database_uri, echo=False)
+    # Use provided database URL or fall back to settings
+    db_url = database_url or settings.sqlalchemy_database_uri
+    db_display = db_url[:50] + "..." if len(db_url) > 50 else db_url
+    print(f"Using database: {db_display}")
+    
+    engine = create_async_engine(db_url, echo=False)
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     
     async with async_session() as session:
@@ -78,11 +90,13 @@ async def setup_admin_user(email: str, full_name: str | None = None) -> None:
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python setup_admin_user.py <email> [full_name]")
-        print("Example: python setup_admin_user.py admin@example.com 'John Admin'")
+        print("Usage: python scripts/setup_admin_user.py <email> [full_name] [database_url]")
+        print("Example: python scripts/setup_admin_user.py admin@example.com 'John Admin'")
+        print("Example with Railway: python scripts/setup_admin_user.py admin@example.com 'John' 'postgresql://...'")
         sys.exit(1)
     
     email = sys.argv[1]
     full_name = sys.argv[2] if len(sys.argv) > 2 else None
+    database_url = sys.argv[3] if len(sys.argv) > 3 else None
     
-    asyncio.run(setup_admin_user(email, full_name))
+    asyncio.run(setup_admin_user(email, full_name, database_url))
