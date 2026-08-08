@@ -26,4 +26,4 @@ EXPOSE 8000
 
 # Default command: run FastAPI (Railway uses $PORT env var)
 # Note: Alembic migrations should be run separately via Railway CLI or one-off job
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "sleep 30 && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
