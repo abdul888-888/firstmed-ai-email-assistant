@@ -29,7 +29,6 @@ from app.core.rate_limit import AUTH_RATE_LIMIT, limiter
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models.user import User
 from app.repositories.connected_account import ConnectedAccountRepository
-from app.repositories.google_credential import GoogleCredentialRepository
 from app.repositories.user import UserRepository
 from app.schemas.auth import GoogleAuthorizationURL, Token
 from app.schemas.user import UserCreate, UserRead
@@ -306,10 +305,11 @@ async def google_callback(
             status_code=status.HTTP_403_FORBIDDEN, detail="User account is inactive"
         )
 
-    await GoogleCredentialRepository(session).upsert(
+    await ConnectedAccountRepository(session).upsert(
         user_id=user.id,
-        google_sub=profile.sub,
-        google_email=profile.email,
+        provider_type="gmail",
+        provider_email=profile.email,
+        provider_sub=profile.sub,
         access_token_enc=encrypt(tokens.access_token),
         refresh_token_enc=encrypt(tokens.refresh_token) if tokens.refresh_token else None,
         token_expiry=tokens.expiry,
