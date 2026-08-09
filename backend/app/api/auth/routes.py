@@ -231,31 +231,9 @@ async def invite_set_password(
 
 
 @router.get("/me", response_model=UserRead, summary="Get the current user")
-async def me(current_user: User = Depends(get_current_user)) -> dict:
+async def me(current_user: User = Depends(get_current_user)) -> User:
     """Get current authenticated user info."""
-    try:
-        # Convert to dict similar to debug endpoint approach
-        user_dict = {
-            "id": current_user.id,  # Keep as UUID, not string
-            "email": current_user.email,
-            "full_name": current_user.full_name,
-            "role": current_user.role,  # Keep as enum
-            "department": current_user.department,
-            "is_active": current_user.is_active,
-            "is_on_shift": current_user.is_on_shift,
-            "shift_started_at": current_user.shift_started_at,
-            "created_at": current_user.created_at,
-            "updated_at": current_user.updated_at,
-        }
-        
-        logger.info(f"auth.me - Returning user dict for {current_user.email}")
-        return user_dict
-        
-    except Exception as e:
-        logger.error(f"auth.me - Error: {type(e).__name__}: {e}")
-        import traceback
-        logger.error(f"auth.me - Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"User serialization error: {str(e)}")
+    return current_user
 
 
 @router.get("/me-manual", summary="Manual user lookup without dependency")
