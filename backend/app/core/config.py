@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     secret_key: SecretStr = SecretStr("change-me-in-production")
     access_token_expire_minutes: int = 60
     algorithm: str = "HS256"
-    backend_cors_origins: list[str] | str = ["http://localhost:3000"]
+    backend_cors_origins: list[str] | str = ["http://localhost:3000", "https://firstmed-ai-email-assistant.vercel.app"]
     token_encryption_key: SecretStr = SecretStr("")
     phi_encryption_key: SecretStr = SecretStr("")
 

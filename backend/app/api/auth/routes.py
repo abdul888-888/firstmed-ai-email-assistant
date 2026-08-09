@@ -232,7 +232,12 @@ async def invite_set_password(
 
 @router.get("/me", response_model=UserRead, summary="Get the current user")
 async def me(current_user: User = Depends(get_current_user)) -> User:
-    return current_user
+    try:
+        logger.info(f"auth.me - User retrieved: {current_user.email}, Role: {current_user.role}")
+        return current_user
+    except Exception as e:
+        logger.error(f"auth.me - Error returning user: {type(e).__name__}: {e}")
+        raise
 
 
 # --- Google OAuth (staff SSO) --------------------------------------------
