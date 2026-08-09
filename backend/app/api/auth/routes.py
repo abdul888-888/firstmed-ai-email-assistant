@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import httpx
 
-from app.api.deps import get_current_user, oauth2_scheme
+from app.api.deps import get_current_user, oauth2_scheme, get_db
 from app.core.config import settings
 from app.core.crypto import encrypt
 from app.core.database import get_db
@@ -259,18 +259,55 @@ async def me(current_user: User = Depends(get_current_user)) -> dict:
         raise
 
 
-@router.get("/debug", summary="Debug endpoint to test auth without user lookup")
-async def debug_auth(
+@router.get("/debug-db", summary="Debug database user lookup")
+async def debug_db(
     token: str = Depends(oauth2_scheme),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Debug endpoint to isolate JWT decoding from user lookup."""
+    """Debug endpoint to test database lookup specifically."""
     try:
         from app.core.security import decode_access_token
+        from app.repositories.user import UserRepository
+        import uuid
+        
+        # 1. Decode JWT
         payload = decode_access_token(token)
-        return {"status": "success", "payload": payload}
+        subject = payload.get("sub")
+        
+        if not subject:
+            return {"status": "error", "step": "jwt_decode", "error": "No subject in token"}
+            
+        # 2. Convert to UUID
+        try:
+            user_id = uuid.UUID(str(subject))
+        except Exception as e:
+            return {"status": "error", "step": "uuid_conversion", "error": str(e), "subject": subject}
+        
+        # 3. Database lookup
+        try:
+            user_repo = UserRepository(session)
+            user = await user_repo.get_by_id(user_id)
+            
+            if user:
+                return {
+                    "status": "success",
+                    "user_found": True,
+                    "user_email": user.email,
+                    "user_active": user.is_active,
+                    "user_role": str(user.role)
+                }
+            else:
+                return {
+                    "status": "success", 
+                    "user_found": False,
+                    "searched_id": str(user_id)
+                }
+                
+        except Exception as e:
+            return {"status": "error", "step": "database_lookup", "error": str(e)}
+            
     except Exception as e:
-        logger.error(f"auth.debug - JWT decode error: {type(e).__name__}: {e}")
-        return {"status": "error", "error": str(e)}
+        return {"status": "error", "step": "general", "error": str(e)}
 
 
 # --- Google OAuth (staff SSO) --------------------------------------------
