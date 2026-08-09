@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import httpx
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, oauth2_scheme
 from app.core.config import settings
 from app.core.crypto import encrypt
 from app.core.database import get_db
