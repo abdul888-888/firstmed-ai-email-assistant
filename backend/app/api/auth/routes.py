@@ -230,10 +230,39 @@ async def invite_set_password(
     return Token(access_token=token, role=user.role.value, redirect_url="/reviews")
 
 
-@router.get("/me", response_model=UserRead, summary="Get the current user")
-async def me(current_user: User = Depends(get_current_user)) -> User:
+@router.get("/me", response_model=UserRead, summary="Get the current user")  
+async def me(
+    token: str = Depends(oauth2_scheme),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
     """Get current authenticated user info."""
-    return current_user
+    from app.core.security import decode_access_token
+    from app.repositories.user import UserRepository
+    import uuid
+    
+    # Manual implementation that works
+    payload = decode_access_token(token)
+    subject = payload.get("sub")
+    user_id = uuid.UUID(str(subject))
+    
+    user_repo = UserRepository(session)
+    user = await user_repo.get_by_id(user_id)
+    
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    return {
+        "id": user.id,
+        "email": user.email,
+        "full_name": user.full_name,
+        "role": user.role,
+        "department": user.department,
+        "is_active": user.is_active,
+        "is_on_shift": user.is_on_shift,
+        "shift_started_at": user.shift_started_at,
+        "created_at": user.created_at,
+        "updated_at": user.updated_at,
+    }
 
 
 @router.get("/me-manual", summary="Manual user lookup without dependency")

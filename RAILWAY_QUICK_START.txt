@@ -1,0 +1,74 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                   RAILWAY DEPLOYMENT FIX - QUICK START                        ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+YOUR SITUATION:
+  ❌ Backend crashed: KeyError: '0013'
+  ❌ Old Docker image has broken migration files
+  ✅ Fixed code is in your Git repo
+  ✅ Fixed migrations just need to be deployed
+
+SOLUTION IN 3 STEPS:
+
+┌─ STEP 1: Get Database Credentials ──────────────────────────────────────────┐
+│                                                                               │
+│  Go to railway.app → Your Project → PostgreSQL service → Variables tab      │
+│  Copy the DATABASE_URL value                                                 │
+│                                                                               │
+│  Example: postgresql://user:password@host:5432/dbname                       │
+│                                                                               │
+└───────────────────────────────────────────────────────────────────────────────┘
+
+┌─ STEP 2: Mark Migrations as Complete ───────────────────────────────────────┐
+│                                                                               │
+│  Run this ONE command in your terminal:                                      │
+│                                                                               │
+│  psql "postgresql://user:password@host:5432/dbname" -c \                    │
+│    "INSERT INTO alembic_version (version_num, is_primary) \                 │
+│     VALUES ('0013', true), ('0014', true) \                                 │
+│     ON CONFLICT (version_num) DO NOTHING;"                                  │
+│                                                                               │
+│  REPLACE: user, password, host, dbname with your actual DATABASE_URL values │
+│                                                                               │
+└───────────────────────────────────────────────────────────────────────────────┘
+
+┌─ STEP 3: Deploy with Fixed Migrations ──────────────────────────────────────┐
+│                                                                               │
+│  Push to Git to trigger Railway rebuild:                                    │
+│                                                                               │
+│  $ git add .                                                                 │
+│  $ git commit -m "Deploy: fix Alembic migrations"                           │
+│  $ git push origin main                                                      │
+│                                                                               │
+│  OR: Manually redeploy in Railway UI:                                        │
+│  - Go to API service                                                         │
+│  - Click ⋮ menu → "Redeploy"                                                │
+│                                                                               │
+│  OR: Using Railway CLI:                                                      │
+│  $ railway deploy                                                            │
+│                                                                               │
+└───────────────────────────────────────────────────────────────────────────────┘
+
+WHAT HAPPENS NEXT:
+  1. Railway detects new code/redeploy request
+  2. Rebuilds Docker image with fixed migration files (2-3 minutes)
+  3. Deploys new image
+  4. Alembic reads the fixed migrations
+  5. Skips 0013/0014 (already marked complete)
+  6. Container starts successfully ✅
+
+VERIFY IT WORKED:
+  1. Check Railway Deployments tab — see green status?
+  2. Check logs — see "Alembic Done"?
+  3. Curl the health endpoint: curl https://your-domain/health
+  4. Should return: {"status":"ok"}
+
+TROUBLESHOOTING:
+  • "psql command not found" → Use Railway CLI: railway run psql -c "..."
+  • Still crashing? → Railway might be running old image, click Redeploy again
+  • Can't connect to DB? → Check DATABASE_URL is correct from Railway dashboard
+
+FULL DETAILS:
+  See RAILWAY_DEPLOYMENT_FIX.md for complete step-by-step guide
+
+═══════════════════════════════════════════════════════════════════════════════
