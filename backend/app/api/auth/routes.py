@@ -258,55 +258,47 @@ async def me(current_user: User = Depends(get_current_user)) -> dict:
         raise HTTPException(status_code=500, detail=f"User serialization error: {str(e)}")
 
 
-@router.get("/debug-db", summary="Debug database user lookup")
-async def debug_db(
+@router.get("/me-manual", summary="Manual user lookup without dependency")
+async def me_manual(
     token: str = Depends(oauth2_scheme),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Debug endpoint to test database lookup specifically."""
+    """Manual implementation of /me endpoint to isolate dependency issue."""
     try:
         from app.core.security import decode_access_token
         from app.repositories.user import UserRepository
         import uuid
         
-        # 1. Decode JWT
+        # Manual get_current_user implementation
         payload = decode_access_token(token)
         subject = payload.get("sub")
+        user_id = uuid.UUID(str(subject))
         
-        if not subject:
-            return {"status": "error", "step": "jwt_decode", "error": "No subject in token"}
-            
-        # 2. Convert to UUID
-        try:
-            user_id = uuid.UUID(str(subject))
-        except Exception as e:
-            return {"status": "error", "step": "uuid_conversion", "error": str(e), "subject": subject}
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
         
-        # 3. Database lookup
-        try:
-            user_repo = UserRepository(session)
-            user = await user_repo.get_by_id(user_id)
-            
-            if user:
-                return {
-                    "status": "success",
-                    "user_found": True,
-                    "user_email": user.email,
-                    "user_active": user.is_active,
-                    "user_role": str(user.role)
-                }
-            else:
-                return {
-                    "status": "success", 
-                    "user_found": False,
-                    "searched_id": str(user_id)
-                }
-                
-        except Exception as e:
-            return {"status": "error", "step": "database_lookup", "error": str(e)}
-            
+        if not user or not user.is_active:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        
+        # Return user data
+        return {
+            "id": user.id,
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+            "department": user.department,
+            "is_active": user.is_active,
+            "is_on_shift": user.is_on_shift,
+            "shift_started_at": user.shift_started_at,
+            "created_at": user.created_at,
+            "updated_at": user.updated_at,
+        }
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        return {"status": "error", "step": "general", "error": str(e)}
+        logger.error(f"auth.me_manual - Error: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"Manual auth error: {str(e)}")
 
 
 # --- Google OAuth (staff SSO) --------------------------------------------
