@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
-import { parseAuthFragment, setToken, takeReturnTo } from "@/lib/auth";
+import { parseAuthFragment, setToken, takeReturnTo, authHeader } from "@/lib/auth";
+import { API_BASE_URL } from "@/lib/api";
 
 type Status =
   | { kind: "working" }
@@ -13,42 +14,79 @@ type Status =
 
 /**
  * Google OAuth landing page. The backend redirects here with the access token
- * in the URL fragment; we store it and bounce to the home page. On error
- * (e.g. the user denied consent) we surface the reason instead.
+ * in the URL fragment; we store it and bounce to the appropriate dashboard.
+ * On error (e.g. the user denied consent) we surface the reason instead.
  */
 export default function AuthCallbackPage() {
   const router = useRouter();
   const [status, setStatus] = useState<Status>({ kind: "working" });
 
   useEffect(() => {
-    try {
-      const result = parseAuthFragment(window.location.hash);
+    async function handleCallback() {
+      try {
+        const result = parseAuthFragment(window.location.hash);
 
-      if (result === null) {
-        setStatus({ kind: "error", message: "No sign-in details were returned." });
-        return;
+        if (result === null) {
+          setStatus({ kind: "error", message: "No sign-in details were returned." });
+          return;
+        }
+        if (!result.ok) {
+          setStatus({ kind: "error", message: `Google sign-in failed: ${result.error}` });
+          return;
+        }
+
+        setToken(result.accessToken);
+        
+        // Get user info to determine correct dashboard redirect
+        try {
+          const userRes = await fetch(`${API_BASE_URL}/api/v1/auth/me`, {
+            headers: { Authorization: `Bearer ${result.accessToken}` }
+          });
+          
+          let redirectPath = "/";
+          if (userRes.ok) {
+            const user = await userRes.json();
+            const role = user.role?.toUpperCase();
+            
+            // Role-based redirects matching backend logic
+            if (role === "ADMIN") {
+              redirectPath = "/admin";
+            } else if (role === "FRONT_OFFICE") {
+              redirectPath = "/reviews";
+            } else if (role === "BOOKING_COORDINATOR" || role === "BOOKINGS") {
+              redirectPath = "/bookings";
+            } else {
+              redirectPath = "/clinical";
+            }
+          } else {
+            // Fallback to stored return path if user fetch fails
+            redirectPath = takeReturnTo();
+          }
+          
+          setStatus({ kind: "success" });
+
+          // Remove the token from the address bar, then redirect
+          window.history.replaceState(null, "", window.location.pathname);
+          const timer = window.setTimeout(() => router.replace(redirectPath), 600);
+          return () => window.clearTimeout(timer);
+        } catch (apiError) {
+          console.warn("Failed to get user info, using fallback redirect:", apiError);
+          const fallbackPath = takeReturnTo();
+          setStatus({ kind: "success" });
+          window.history.replaceState(null, "", window.location.pathname);
+          const timer = window.setTimeout(() => router.replace(fallbackPath), 600);
+          return () => window.clearTimeout(timer);
+        }
+      } catch (error) {
+        console.error("Auth callback error:", error);
+        setStatus({
+          kind: "error",
+          message: `An error occurred: ${error instanceof Error ? error.message : "Unknown error"}`
+        });
       }
-      if (!result.ok) {
-        setStatus({ kind: "error", message: `Google sign-in failed: ${result.error}` });
-        return;
-      }
-
-      setToken(result.accessToken);
-      setStatus({ kind: "success" });
-
-      // Remove the token from the address bar, then continue to wherever the
-      // user started the sign-in from (defaults to home).
-      window.history.replaceState(null, "", window.location.pathname);
-      const dest = takeReturnTo();
-      const timer = window.setTimeout(() => router.replace(dest), 600);
-      return () => window.clearTimeout(timer);
-    } catch (error) {
-      console.error("Auth callback error:", error);
-      setStatus({
-        kind: "error",
-        message: `An error occurred: ${error instanceof Error ? error.message : "Unknown error"}`
-      });
     }
+
+    handleCallback();
   }, [router]);
 
   return (
