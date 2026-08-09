@@ -231,12 +231,31 @@ async def invite_set_password(
 
 
 @router.get("/me", response_model=UserRead, summary="Get the current user")
-async def me(current_user: User = Depends(get_current_user)) -> User:
+async def me(current_user: User = Depends(get_current_user)) -> dict:
     try:
         logger.info(f"auth.me - User retrieved: {current_user.email}, Role: {current_user.role}")
-        return current_user
+        
+        # Manual serialization to catch specific errors
+        user_dict = {
+            "id": str(current_user.id),
+            "email": current_user.email,
+            "full_name": current_user.full_name,
+            "role": current_user.role.value if hasattr(current_user.role, 'value') else str(current_user.role),
+            "department": current_user.department,
+            "is_active": current_user.is_active,
+            "is_on_shift": current_user.is_on_shift,
+            "shift_started_at": current_user.shift_started_at,
+            "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
+            "updated_at": current_user.updated_at.isoformat() if current_user.updated_at else None,
+        }
+        
+        logger.info(f"auth.me - Manual serialization successful: {user_dict}")
+        return user_dict
+        
     except Exception as e:
-        logger.error(f"auth.me - Error returning user: {type(e).__name__}: {e}")
+        logger.error(f"auth.me - Error: {type(e).__name__}: {e}")
+        import traceback
+        logger.error(f"auth.me - Traceback: {traceback.format_exc()}")
         raise
 
 
