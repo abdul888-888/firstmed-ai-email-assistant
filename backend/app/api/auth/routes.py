@@ -259,6 +259,20 @@ async def me(current_user: User = Depends(get_current_user)) -> dict:
         raise
 
 
+@router.get("/debug", summary="Debug endpoint to test auth without user lookup")
+async def debug_auth(
+    token: str = Depends(oauth2_scheme),
+) -> dict:
+    """Debug endpoint to isolate JWT decoding from user lookup."""
+    try:
+        from app.core.security import decode_access_token
+        payload = decode_access_token(token)
+        return {"status": "success", "payload": payload}
+    except Exception as e:
+        logger.error(f"auth.debug - JWT decode error: {type(e).__name__}: {e}")
+        return {"status": "error", "error": str(e)}
+
+
 # --- Google OAuth (staff SSO) --------------------------------------------
 
 
