@@ -218,8 +218,16 @@ function LoginForm() {
                       type="button"
                       variant="outline"
                       className="w-full border-slate-300 text-slate-700 hover:bg-slate-50"
-                      onClick={() => {
-                        window.location.href = "https://api-production-c575.up.railway.app/api/v1/auth/google/login";
+                      onClick={async () => {
+                        try {
+                          const res = await fetch("https://api-production-c575.up.railway.app/api/v1/auth/google/login");
+                          const data = await res.json();
+                          if (data.authorization_url) {
+                            window.location.href = data.authorization_url;
+                          }
+                        } catch (e) {
+                          console.error("SSO failed", e);
+                        }
                       }}
                     >
                       <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
