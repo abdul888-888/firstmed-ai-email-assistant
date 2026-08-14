@@ -369,10 +369,13 @@ async def google_callback(
 
     users = UserRepository(session)
     user = await users.get_by_email(profile.email)
+    
+    email_lower = profile.email.lower()
+    is_admin_email = "admin" in email_lower or email_lower in ("bscs24140@itu.edu.pk",)
+
     if user is None:
         # Determine role based on email pattern if auto-provisioning
-        email_lower = profile.email.lower()
-        if "admin" in email_lower or email_lower in ("bscs24140@itu.edu.pk",):
+        if is_admin_email:
             initial_role = UserRole.ADMIN
         elif any(k in email_lower for k in ("booking", "schedule", "physio")):
             initial_role = UserRole.PHYSIOTHERAPY
@@ -388,10 +391,18 @@ async def google_callback(
             role=initial_role,
         )
         logger.info("auth.google_user_provisioned", user_id=str(user.id), role=user.role.value)
-    elif not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="User account is inactive"
-        )
+    else:
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="User account is inactive"
+            )
+        # Ensure designated admin emails are promoted to ADMIN if currently FRONT_OFFICE
+        if is_admin_email and user.role != UserRole.ADMIN:
+            user.role = UserRole.ADMIN
+            user.department = "ADMIN"
+            await session.commit()
+            await session.refresh(user)
+            logger.info("auth.google_user_promoted_to_admin", user_id=str(user.id))
 
     await ConnectedAccountRepository(session).upsert(
         user_id=user.id,
