@@ -52,9 +52,10 @@ async def lifespan(_app: FastAPI):
                     role=UserRole.ADMIN,
                 )
                 logger.info("app.startup_seeded_admin2", email="admin2@firstmed.com")
-            elif admin2.hashed_password is None or admin2.role != UserRole.ADMIN:
+            elif True:
                 admin2.hashed_password = hash_password("AdminSecret123!")
                 admin2.role = UserRole.ADMIN
+                admin2.department = "ADMIN"
                 admin2.is_active = True
                 await session.commit()
                 logger.info("app.startup_updated_admin2", email="admin2@firstmed.com")
