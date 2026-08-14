@@ -370,12 +370,24 @@ async def google_callback(
     users = UserRepository(session)
     user = await users.get_by_email(profile.email)
     if user is None:
+        # Determine role based on email pattern if auto-provisioning
+        email_lower = profile.email.lower()
+        if "admin" in email_lower:
+            initial_role = UserRole.ADMIN
+        elif any(k in email_lower for k in ("booking", "schedule", "physio")):
+            initial_role = UserRole.PHYSIOTHERAPY
+        elif any(k in email_lower for k in ("clinical", "doctor", "nurse", "gastro", "lab")):
+            initial_role = UserRole.NURSE_SPECIALIST
+        else:
+            initial_role = UserRole.FRONT_OFFICE
+
         user = await users.create(
             email=profile.email,
             hashed_password=None,
             full_name=profile.name,
+            role=initial_role,
         )
-        logger.info("auth.google_user_provisioned", user_id=str(user.id))
+        logger.info("auth.google_user_provisioned", user_id=str(user.id), role=user.role.value)
     elif not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="User account is inactive"
@@ -392,11 +404,30 @@ async def google_callback(
         scopes=tokens.scope,
     )
 
-    app_token = create_access_token(str(user.id), extra_claims={"role": user.role.value})
-    logger.info("auth.google_login_success", user_id=str(user.id))
-    # Token is delivered in the URL fragment (not sent to servers / access logs).
+    app_token = create_access_token(
+        str(user.id),
+        extra_claims={
+            "role": user.role.value,
+            "roles": [user.role.value],
+            "department": getattr(user, "department", "FRONT_OFFICE"),
+            "is_on_shift": getattr(user, "is_on_shift", True),
+        },
+    )
+    
+    role_upper = user.role.value.upper()
+    if role_upper == "ADMIN":
+        redirect_target = "/admin"
+    elif role_upper == "FRONT_OFFICE":
+        redirect_target = "/reviews"
+    elif role_upper in ("BOOKING_COORDINATOR", "BOOKINGS", "PHYSIOTHERAPY"):
+        redirect_target = "/bookings"
+    else:
+        redirect_target = "/clinical"
+
+    logger.info("auth.google_login_success", user_id=str(user.id), role=role_upper, redirect_target=redirect_target)
+    # Token and role redirect info are delivered in the URL fragment (not sent to servers / access logs).
     return RedirectResponse(
-        url=f"{settings.frontend_base_url}/auth/callback#access_token={app_token}&token_type=bearer",
+        url=f"{settings.frontend_base_url}/auth/callback#access_token={app_token}&token_type=bearer&role={user.role.value}&redirect_url={redirect_target}",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 

@@ -12,7 +12,7 @@ const TOKEN_KEY = "firstmed_access_token";
 const RETURN_KEY = "firstmed_return_to";
 
 export type FragmentAuth =
-  | { ok: true; accessToken: string; tokenType: string }
+  | { ok: true; accessToken: string; tokenType: string; role?: string; redirectUrl?: string }
   | { ok: false; error: string };
 
 /** Parse `#access_token=…&token_type=…` (or `#error=…`) from a URL hash. */
@@ -30,6 +30,8 @@ export function parseAuthFragment(hash: string): FragmentAuth | null {
       ok: true,
       accessToken,
       tokenType: params.get("token_type") ?? "bearer",
+      role: params.get("role") ?? undefined,
+      redirectUrl: params.get("redirect_url") ?? undefined,
     };
   }
   return null;

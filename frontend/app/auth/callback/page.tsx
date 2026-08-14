@@ -37,46 +37,45 @@ export default function AuthCallbackPage() {
 
         setToken(result.accessToken);
         
-        // Get user info to determine correct dashboard redirect
-        try {
-          const userRes = await fetch(`${API_BASE_URL}/api/v1/auth/me`, {
-            headers: { Authorization: `Bearer ${result.accessToken}` }
-          });
-          
-          let redirectPath = "/";
-          if (userRes.ok) {
-            const user = await userRes.json();
-            const role = user.role?.toUpperCase();
+        let redirectPath = result.redirectUrl || "";
+
+        if (!redirectPath) {
+          // Get user info to determine correct dashboard redirect
+          try {
+            const userRes = await fetch(`${API_BASE_URL}/api/v1/auth/me`, {
+              headers: { Authorization: `Bearer ${result.accessToken}` }
+            });
             
-            // Role-based redirects matching backend logic
-            if (role === "ADMIN") {
-              redirectPath = "/admin";
-            } else if (role === "FRONT_OFFICE") {
-              redirectPath = "/reviews";
-            } else if (role === "BOOKING_COORDINATOR" || role === "BOOKINGS") {
-              redirectPath = "/bookings";
+            if (userRes.ok) {
+              const user = await userRes.json();
+              const role = user.role?.toUpperCase();
+              
+              // Role-based redirects matching spec & backend logic
+              if (role === "ADMIN") {
+                redirectPath = "/admin";
+              } else if (role === "FRONT_OFFICE") {
+                redirectPath = "/reviews";
+              } else if (role === "BOOKING_COORDINATOR" || role === "BOOKINGS" || role === "PHYSIOTHERAPY") {
+                redirectPath = "/bookings";
+              } else {
+                redirectPath = "/clinical";
+              }
             } else {
-              redirectPath = "/clinical";
+              // Fallback to stored return path if user fetch fails
+              redirectPath = takeReturnTo();
             }
-          } else {
-            // Fallback to stored return path if user fetch fails
+          } catch (apiError) {
+            console.warn("Failed to get user info, using fallback redirect:", apiError);
             redirectPath = takeReturnTo();
           }
-          
-          setStatus({ kind: "success" });
-
-          // Remove the token from the address bar, then redirect
-          window.history.replaceState(null, "", window.location.pathname);
-          const timer = window.setTimeout(() => router.replace(redirectPath), 600);
-          return () => window.clearTimeout(timer);
-        } catch (apiError) {
-          console.warn("Failed to get user info, using fallback redirect:", apiError);
-          const fallbackPath = takeReturnTo();
-          setStatus({ kind: "success" });
-          window.history.replaceState(null, "", window.location.pathname);
-          const timer = window.setTimeout(() => router.replace(fallbackPath), 600);
-          return () => window.clearTimeout(timer);
         }
+        
+        setStatus({ kind: "success" });
+
+        // Remove the token from the address bar, then redirect
+        window.history.replaceState(null, "", window.location.pathname);
+        const timer = window.setTimeout(() => router.replace(redirectPath), 600);
+        return () => window.clearTimeout(timer);
       } catch (error) {
         console.error("Auth callback error:", error);
         setStatus({
