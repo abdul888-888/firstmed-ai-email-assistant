@@ -52,7 +52,17 @@ def create_app() -> FastAPI:
     )
 
     # CORS
-    cors_origins = [str(o) for o in settings.backend_cors_origins] if isinstance(settings.backend_cors_origins, list) else [str(settings.backend_cors_origins)]
+    cors_origins = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://firstmed-ai-email-assistant.vercel.app",
+    ]
+    if isinstance(settings.backend_cors_origins, list):
+        cors_origins.extend([str(o) for o in settings.backend_cors_origins if str(o) not in cors_origins])
+    elif isinstance(settings.backend_cors_origins, str) and settings.backend_cors_origins:
+        if settings.backend_cors_origins not in cors_origins:
+            cors_origins.append(settings.backend_cors_origins)
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
@@ -60,6 +70,7 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["*"],
     )
 
     # Request correlation
