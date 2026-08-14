@@ -372,7 +372,7 @@ async def google_callback(
     if user is None:
         # Determine role based on email pattern if auto-provisioning
         email_lower = profile.email.lower()
-        if "admin" in email_lower:
+        if "admin" in email_lower or email_lower in ("bscs24140@itu.edu.pk",):
             initial_role = UserRole.ADMIN
         elif any(k in email_lower for k in ("booking", "schedule", "physio")):
             initial_role = UserRole.PHYSIOTHERAPY
