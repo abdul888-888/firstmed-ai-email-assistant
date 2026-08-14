@@ -27,7 +27,7 @@ from app.core.database import get_db
 from app.core.logging import get_logger
 from app.core.rate_limit import AUTH_RATE_LIMIT, limiter
 from app.core.security import create_access_token, hash_password, verify_password
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.repositories.connected_account import ConnectedAccountRepository
 from app.repositories.user import UserRepository
 from app.schemas.auth import GoogleAuthorizationURL, Token
@@ -396,8 +396,9 @@ async def google_callback(
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN, detail="User account is inactive"
             )
-        # Ensure designated admin emails are promoted to ADMIN if currently FRONT_OFFICE
-        if is_admin_email and user.role != UserRole.ADMIN:
+        # Ensure designated admin emails are promoted to ADMIN if currently not ADMIN
+        current_role_str = str(user.role.value if hasattr(user.role, "value") else user.role).upper()
+        if is_admin_email and current_role_str != "ADMIN":
             user.role = UserRole.ADMIN
             user.department = "ADMIN"
             await session.commit()
