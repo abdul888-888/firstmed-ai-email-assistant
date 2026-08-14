@@ -91,12 +91,22 @@ async def login(
 ) -> Token:
     # OAuth2 form uses ``username``; we treat it as the email.
     user = await UserRepository(session).get_by_email(form_data.username)
-    # ``hashed_password`` is None for SSO-only accounts, which can't password-login.
-    if (
-        user is None
-        or user.hashed_password is None
-        or not verify_password(form_data.password, user.hashed_password)
-    ):
+    if user is None:
+        logger.warning("auth.login_failed_no_user", username=form_data.username)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if user.hashed_password is None:
+        logger.warning("auth.login_failed_sso_only", username=form_data.username)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if not verify_password(form_data.password, user.hashed_password):
+        logger.warning("auth.login_failed_invalid_password", username=form_data.username)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
