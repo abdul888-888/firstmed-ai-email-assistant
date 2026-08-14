@@ -37,6 +37,7 @@ class UserRepository:
             hashed_password=hashed_password,
             full_name=full_name,
             role=role,
+            department="ADMIN" if str(role.value if hasattr(role, "value") else role).upper() == "ADMIN" else "FRONT_OFFICE",
         )
         self.session.add(user)
         await self.session.commit()
