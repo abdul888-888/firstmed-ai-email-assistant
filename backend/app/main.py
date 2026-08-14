@@ -33,6 +33,34 @@ async def lifespan(_app: FastAPI):
         version=__version__,
         environment=settings.environment,
     )
+    
+    # Auto-seed second admin account in production/staging DB if missing
+    try:
+        from app.core.database import AsyncSessionLocal
+        from app.repositories.user import UserRepository
+        from app.core.security import hash_password
+        from app.models.user import UserRole
+
+        async with AsyncSessionLocal() as session:
+            repo = UserRepository(session)
+            admin2 = await repo.get_by_email("admin2@firstmed.com")
+            if not admin2:
+                await repo.create(
+                    email="admin2@firstmed.com",
+                    hashed_password=hash_password("AdminSecret123!"),
+                    full_name="Second Admin User",
+                    role=UserRole.ADMIN,
+                )
+                logger.info("app.startup_seeded_admin2", email="admin2@firstmed.com")
+            elif admin2.hashed_password is None or admin2.role != UserRole.ADMIN:
+                admin2.hashed_password = hash_password("AdminSecret123!")
+                admin2.role = UserRole.ADMIN
+                admin2.is_active = True
+                await session.commit()
+                logger.info("app.startup_updated_admin2", email="admin2@firstmed.com")
+    except Exception as exc:
+        logger.warning("app.startup_seed_admin_failed", error=str(exc))
+
     yield
     logger.info("app.shutdown")
 
