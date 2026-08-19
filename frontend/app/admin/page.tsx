@@ -31,8 +31,8 @@ import {
   type AuditLogEntry,
   type RoutingRule,
   type TeamMember,
-} from "@/lib/admin";
-import { getKnowledgeGaps, type KnowledgeGap } from "@/lib/api";
+import { API_BASE_URL, getKnowledgeGaps, type KnowledgeGap } from "@/lib/api";
+import { getToken } from "@/lib/auth";
 
 export default function AdminDashboardPage() {
   const router = useRouter();
@@ -83,13 +83,13 @@ export default function AdminDashboardPage() {
     // Check if user has admin role before loading data
     const checkAuthorization = async () => {
       try {
-        const token = localStorage.getItem("token");
+        const token = getToken() || localStorage.getItem("token") || localStorage.getItem("firstmed_access_token");
         if (!token) {
           router.push("/login");
           return;
         }
 
-        const response = await fetch("/api/v1/auth/me", {
+        const response = await fetch(`${API_BASE_URL}/api/v1/auth/me`, {
           headers: {
             Authorization: `Bearer ${token}`,
           },

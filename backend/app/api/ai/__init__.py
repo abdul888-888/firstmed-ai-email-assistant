@@ -5,7 +5,7 @@ All endpoints require an authenticated staff user and a configured Anthropic key
 """
 
 from __future__ import annotations
-
+import os
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,7 +27,7 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 
 _NOT_CONFIGURED = HTTPException(
     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-    detail="AI is not configured on this server (set ANTHROPIC_API_KEY)",
+    detail="AI is not configured on this server (set GROQ_API_KEY)",
 )
 _NOT_CONNECTED = HTTPException(
     status_code=status.HTTP_409_CONFLICT,
@@ -36,7 +36,9 @@ _NOT_CONNECTED = HTTPException(
 
 
 def _require_ai() -> None:
-    if not settings.ai_configured:
+    # ✅ Check for GROQ_API_KEY or updated settings property
+    groq_key = os.getenv("GROQ_API_KEY") or getattr(settings, "groq_api_key", None)
+    if not groq_key and not getattr(settings, "ai_configured", False):
         raise _NOT_CONFIGURED
 
 
@@ -52,14 +54,15 @@ def _ai_error(exc: AIError) -> HTTPException:
 
 @router.get("/status", summary="Module status")
 async def status_() -> dict:
+    groq_key = os.getenv("GROQ_API_KEY") or getattr(settings, "groq_api_key", None)
+    is_configured = bool(groq_key) or getattr(settings, "ai_configured", False)
     return {
         "module": "ai",
         "implemented": True,
         "phase": 5,
-        "configured": settings.ai_configured,
-        "model": settings.ai_model,
+        "configured": is_configured,
+        "model": getattr(settings, "ai_model", "llama-3.3-70b-versatile"),
     }
-
 
 @router.post("/triage", response_model=TriageResult, summary="Classify an email")
 async def triage(
