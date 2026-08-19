@@ -31,6 +31,7 @@ import {
   type AuditLogEntry,
   type RoutingRule,
   type TeamMember,
+} from "@/lib/admin";
 import { API_BASE_URL, getKnowledgeGaps, type KnowledgeGap } from "@/lib/api";
 import { getToken } from "@/lib/auth";
 
