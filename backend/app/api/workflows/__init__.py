@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.logging import get_logger
 from app.models.user import User
+from app.repositories.connected_account import ConnectedAccountRepository
 from app.repositories.draft_review import DuplicateReviewError
 from app.schemas.review import DraftReviewRead
 from app.services.gmail_service import GmailApiError, GmailNotConnectedError
@@ -74,19 +75,25 @@ async def pull_gmail(
 async def pull_gmail_async(
     max_results: int = 12,
     current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
 ) -> dict:
     """Non-blocking variant of ``POST /pull``: enqueues the same triage
-    pipeline on a Celery worker instead of running it inline the HTTP request,
-    so it can't hit a request timeout and per-message Gmail/AI errors can be
-    retried. Requires a Celery worker to be running
-    (``celery -A app.workers.celery_app worker``) — otherwise the task sits
-    queued until one picks it up. Poll ``GET /pull-async/{task_id}`` for the
-    result. The existing synchronous ``POST /pull`` is unchanged and still
-    works with no worker running.
+    pipeline on a Celery worker instead of running it inline the HTTP request.
     """
     if not settings.ai_configured:
         raise _NOT_CONFIGURED
-    task = pull_gmail_task.delay(str(current_user.id), max_results, DEFAULT_PULL_QUERY)
+
+    account_repo = ConnectedAccountRepository(session)
+    account = await account_repo.get_primary_account(current_user.id)
+    if account is None:
+        raise _NOT_CONNECTED
+
+    task = pull_gmail_task.delay(
+        str(current_user.id),
+        str(account.id),
+        max_results,
+        DEFAULT_PULL_QUERY,
+    )
     return {"task_id": task.id, "status": "queued"}
 
 
