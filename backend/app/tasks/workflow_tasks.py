@@ -69,32 +69,53 @@ SessionFactory = Callable[[], "AsyncSession"]
 
 async def _pull_messages_async(
     user_id: str,
-    account_id: str,
-    max_results: int,
-    query: str,
+    account_id: Any = None,
+    max_results: Any = 12,
+    query: str = DEFAULT_PULL_QUERY,
     *,
     session_factory: async_sessionmaker[AsyncSession] | SessionFactory = AsyncSessionLocal,
 ) -> dict:
     """The task's actual logic, independent of Celery/asyncio wrapping.
-
-    ``session_factory`` defaults to the app's real session factory (bound to
-    the configured production/dev DB) but is injectable so tests can pass the
-    isolated per-test session factory instead of hitting a real database.
+    Supports both (user_id, account_id, max_results) and legacy (user_id, max_results, query) calls.
     """
+    # Handle legacy call where 2nd param is max_results integer or non-UUID
+    actual_account_id: str | None = None
+    actual_max_results: int = 12
+
+    if isinstance(account_id, int):
+        actual_max_results = account_id
+        if isinstance(max_results, str):
+            query = max_results
+    elif isinstance(account_id, str):
+        try:
+            uuid.UUID(account_id)
+            actual_account_id = account_id
+            if isinstance(max_results, int):
+                actual_max_results = max_results
+        except ValueError:
+            # account_id is a query string or non-UUID
+            query = account_id
+            if isinstance(max_results, int):
+                actual_max_results = max_results
+
     async with session_factory() as session:
         user = await UserRepository(session).get_by_id(uuid.UUID(user_id))
         if user is None:
             raise ValueError(f"User {user_id} not found")
 
         account_repo = ConnectedAccountRepository(session)
-        account = await account_repo.get_by_id(uuid.UUID(account_id))
+        account = None
+        if actual_account_id:
+            account = await account_repo.get_by_id(uuid.UUID(actual_account_id))
+        if account is None:
+            account = await account_repo.get_primary_account(user.id)
         if account is None:
             raise EmailProviderNotConnectedError(
-                f"No connected account found for account_id={account_id}"
+                f"No connected account found for user_id={user_id}"
             )
 
         return await WorkflowService(session).pull_messages(
-            user, account, max_results=max_results, query=query
+            user, account, max_results=actual_max_results, query=query
         )
 
 
@@ -131,7 +152,7 @@ async def _list_connected_user_ids_async(
 def pull_messages_task(
     self,
     user_id: str,
-    account_id: str,
+    account_id: Any = None,
     max_results: int = 12,
     query: str = DEFAULT_PULL_QUERY,
 ) -> dict:
