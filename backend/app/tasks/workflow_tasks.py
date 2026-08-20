@@ -108,7 +108,7 @@ async def _pull_messages_async(
         if actual_account_id:
             account = await account_repo.get_by_id(uuid.UUID(actual_account_id))
         if account is None:
-            account = await account_repo.get_primary_account(user.id)
+            account = await account_repo.get_by_user_id(user.id)
         if account is None:
             raise EmailProviderNotConnectedError(
                 f"No connected account found for user_id={user_id}"

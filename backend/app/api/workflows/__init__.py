@@ -84,7 +84,7 @@ async def pull_gmail_async(
         raise _NOT_CONFIGURED
 
     account_repo = ConnectedAccountRepository(session)
-    account = await account_repo.get_primary_account(current_user.id)
+    account = await account_repo.get_by_user_id(current_user.id)
     if account is None:
         raise _NOT_CONNECTED
 
