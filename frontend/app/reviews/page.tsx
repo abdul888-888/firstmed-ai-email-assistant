@@ -138,7 +138,7 @@ export default function FrontOfficeConsole() {
   // Optimized: Load only the specified queues to minimize API credit usage
   const loadQueues = useCallback(async (queuesToLoad: ReviewStatus[]) => {
     if (!getToken()) {
-      await startGoogleSignIn("/reviews");
+      if (typeof window !== "undefined") window.location.href = "/login";
       return;
     }
 
@@ -165,8 +165,8 @@ export default function FrontOfficeConsole() {
         return next;
       });
     } catch (err) {
-      if (err instanceof ApiError && err.isUnauthorized) {
-        await startGoogleSignIn("/reviews");
+      if ((err as any)?.status === 401 || (err instanceof ApiError && err.isUnauthorized)) {
+        if (typeof window !== "undefined") window.location.href = "/login";
       } else {
         setError(err instanceof Error ? err.message : "Could not load the review workspace.");
       }
@@ -188,8 +188,8 @@ export default function FrontOfficeConsole() {
       setSelectedId(nextId);
       setSelected(nextId ? visible.find((review) => review.id === nextId) ?? null : null);
     } catch (err) {
-      if (err instanceof ApiError && err.isUnauthorized) {
-        await startGoogleSignIn("/reviews");
+      if ((err as any)?.status === 401 || (err instanceof ApiError && err.isUnauthorized)) {
+        if (typeof window !== "undefined") window.location.href = "/login";
       } else {
         setError(err instanceof Error ? err.message : "Could not load the review workspace.");
       }
@@ -202,7 +202,7 @@ export default function FrontOfficeConsole() {
 
   const sync = useGmailSync({
     onComplete: () => void load(),
-    onUnauthorized: () => void startGoogleSignIn("/reviews"),
+    onUnauthorized: () => { if (typeof window !== "undefined") window.location.href = "/login"; },
   });
 
   const rawReviews = queues[activeQueue] ?? [];
