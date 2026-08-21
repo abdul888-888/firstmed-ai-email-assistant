@@ -51,10 +51,14 @@ export default function AdminDashboardPage() {
   const [slaSaveMessage, setSlaSaveMessage] = useState<string | null>(null);
 
   // Modal states
-  const [showInviteModal, setShowInviteModal] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState("FRONT_OFFICE");
-  const [inviteResult, setInviteResult] = useState<{ invite_link: string } | null>(null);
+  const [showCreateUserModal, setShowCreateUserModal] = useState(false);
+  const [newUserEmail, setNewUserEmail] = useState("");
+  const [newUserFullName, setNewUserFullName] = useState("");
+  const [newUserPassword, setNewPassword] = useState("");
+  const [newUserRole, setNewUserRole] = useState("FRONT_OFFICE");
+  const [newUserDepartment, setNewUserDepartment] = useState("FRONT_OFFICE");
+  const [createUserSubmitting, setCreateUserSubmitting] = useState(false);
+  const [createUserError, setCreateUserError] = useState<string | null>(null);
 
   const [showRuleModal, setShowRuleModal] = useState(false);
   const [ruleCategory, setRuleCategory] = useState("");
@@ -126,15 +130,42 @@ export default function AdminDashboardPage() {
     void checkAuthorization();
   }, [router]);
 
-  const handleInviteStaff = async (e: React.FormEvent) => {
+  const handleCreateStaffUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inviteEmail) return;
+    setCreateUserSubmitting(true);
+    setCreateUserError(null);
     try {
-      const res = await inviteStaffMember(inviteEmail, inviteRole);
-      setInviteResult(res);
+      const token = getToken() || localStorage.getItem("token") || localStorage.getItem("firstmed_access_token");
+      const res = await fetch(`${API_BASE_URL}/api/v1/admin/users`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          email: newUserEmail,
+          full_name: newUserFullName,
+          password: newUserPassword,
+          role: newUserRole,
+          department: newUserDepartment,
+          is_on_shift: true,
+        }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || `Failed to create user (${res.status})`);
+      }
+
+      setShowCreateUserModal(false);
+      setNewUserEmail("");
+      setNewUserFullName("");
+      setNewPassword("");
       await loadData();
-    } catch (err) {
-      alert("Failed to invite staff member");
+    } catch (err: any) {
+      setCreateUserError(err.message || "Failed to create staff member");
+    } finally {
+      setCreateUserSubmitting(false);
     }
   };
 
@@ -197,9 +228,14 @@ export default function AdminDashboardPage() {
               </div>
               <p className="mt-1 text-sm text-slate-500">System governance, staff scope, routing rules, and audit logs.</p>
             </div>
-            <Button size="sm" onClick={() => setShowInviteModal(true)} className="bg-emerald-600 hover:bg-emerald-700">
-              <UserPlus className="mr-2 h-4 w-4" /> Add Staff Member
-            </Button>
+            <div className="flex items-center gap-3">
+              <Button size="sm" variant="outline" onClick={() => router.push("/admin/users")}>
+                <Users className="mr-2 h-4 w-4" /> Manage All Staff
+              </Button>
+              <Button size="sm" onClick={() => setShowCreateUserModal(true)} className="bg-emerald-600 hover:bg-emerald-700">
+                <UserPlus className="mr-2 h-4 w-4" /> Add Staff User
+              </Button>
+            </div>
           </div>
 
           {/* Grid of Admin Cards (§6) */}
@@ -213,9 +249,11 @@ export default function AdminDashboardPage() {
                   </CardTitle>
                   <CardDescription>Role permissions and direct send rights scope.</CardDescription>
                 </div>
-                <Button variant="outline" size="sm" onClick={() => setShowInviteModal(true)}>
-                  <Plus className="mr-1 h-3.5 w-3.5" /> Invite
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setShowCreateUserModal(true)}>
+                    <Plus className="mr-1 h-3.5 w-3.5" /> Add User
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
                 <div className="overflow-x-auto">
@@ -412,47 +450,114 @@ export default function AdminDashboardPage() {
           </div>
         </div>
 
-        {/* Invite Modal */}
-        {showInviteModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        {/* Create Staff User Modal */}
+        {showCreateUserModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
             <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl space-y-4">
-              <h2 className="text-lg font-bold text-slate-900">Invite Staff Member</h2>
-              {inviteResult ? (
-                <div className="space-y-3">
-                  <div className="rounded-md bg-emerald-50 p-3 text-sm text-emerald-800">
-                    Invite generated successfully! Share this link with the staff member:
-                  </div>
-                  <Input value={`${window.location.origin}${inviteResult.invite_link}`} readOnly />
-                  <Button onClick={() => { setShowInviteModal(false); setInviteResult(null); }} className="w-full">Done</Button>
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                  <UserPlus className="h-5 w-5 text-emerald-600" /> Add Staff Member
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setShowCreateUserModal(false)}
+                  className="text-slate-400 hover:text-slate-600 font-semibold"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {createUserError && (
+                <div className="rounded-md bg-rose-50 p-3 text-sm text-rose-700 font-medium">
+                  {createUserError}
                 </div>
-              ) : (
-                <form onSubmit={handleInviteStaff} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Email Address</Label>
-                    <Input type="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} required />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Role</Label>
+              )}
+
+              <form onSubmit={handleCreateStaffUser} className="space-y-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="full_name">Full Name</Label>
+                  <Input
+                    id="full_name"
+                    type="text"
+                    placeholder="e.g. Dr. Jane Smith"
+                    value={newUserFullName}
+                    onChange={(e) => setNewUserFullName(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="email">Email Address</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="e.g. user@gmail.com"
+                    value={newUserEmail}
+                    onChange={(e) => setNewUserEmail(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="password">Initial Password</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    placeholder="Min 8 characters"
+                    value={newUserPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    required
+                    minLength={8}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="role">Assigned Role</Label>
                     <select
-                      value={inviteRole}
-                      onChange={(e) => setInviteRole(e.target.value)}
-                      className="w-full rounded-md border border-slate-200 bg-white p-2 text-sm"
+                      id="role"
+                      value={newUserRole}
+                      onChange={(e) => {
+                        setNewUserRole(e.target.value);
+                        setNewUserDepartment(e.target.value);
+                      }}
+                      className="w-full rounded-md border border-slate-200 bg-white p-2 text-sm focus:ring-2 focus:ring-emerald-500"
                     >
                       <option value="FRONT_OFFICE">Front Office</option>
                       <option value="PHYSIOTHERAPY">Physiotherapy Specialist</option>
                       <option value="GASTROENTEROLOGY">Gastroenterology Specialist</option>
                       <option value="LABORATORY">Laboratory</option>
                       <option value="NURSE_SPECIALIST">Nurse Specialist</option>
-                      <option value="BOOKING_COORDINATOR">Booking Coordinator</option>
                       <option value="ADMIN">Admin</option>
                     </select>
                   </div>
-                  <div className="flex justify-end gap-2">
-                    <Button variant="outline" type="button" onClick={() => setShowInviteModal(false)}>Cancel</Button>
-                    <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700">Generate Invite Link</Button>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="department">Department</Label>
+                    <select
+                      id="department"
+                      value={newUserDepartment}
+                      onChange={(e) => setNewUserDepartment(e.target.value)}
+                      className="w-full rounded-md border border-slate-200 bg-white p-2 text-sm focus:ring-2 focus:ring-emerald-500"
+                    >
+                      <option value="FRONT_OFFICE">Front Office</option>
+                      <option value="PHYSIOTHERAPY">Physiotherapy</option>
+                      <option value="GASTROENTEROLOGY">Gastroenterology</option>
+                      <option value="LABORATORY">Laboratory</option>
+                      <option value="NURSE_SPECIALIST">Nurse Specialist</option>
+                    </select>
                   </div>
-                </form>
-              )}
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                  <Button variant="outline" type="button" onClick={() => setShowCreateUserModal(false)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={createUserSubmitting} className="bg-emerald-600 hover:bg-emerald-700">
+                    {createUserSubmitting ? "Creating..." : "Create Staff Account"}
+                  </Button>
+                </div>
+              </form>
             </div>
           </div>
         )}

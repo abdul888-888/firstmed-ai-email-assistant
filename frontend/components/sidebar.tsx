@@ -8,6 +8,7 @@ import {
   CalendarCheck,
   AlertTriangle,
   ShieldAlert,
+  Users,
   LogOut,
   Loader2,
 } from "lucide-react";
@@ -56,6 +57,12 @@ const navItems: NavItem[] = [
     href: "/admin",
     label: "Admin Dashboard",
     icon: <ShieldAlert className="h-5 w-5" />,
+    roles: ["admin"],
+  },
+  {
+    href: "/admin/users",
+    label: "Staff & Users",
+    icon: <Users className="h-5 w-5" />,
     roles: ["admin"],
   },
 ];
