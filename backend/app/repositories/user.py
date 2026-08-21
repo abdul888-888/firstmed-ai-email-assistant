@@ -30,14 +30,19 @@ class UserRepository:
         hashed_password: str | None = None,
         full_name: str = "",
         role: UserRole = UserRole.front_office,
+        department: str | None = None,
+        is_on_shift: bool = True,
     ) -> User:
         """Create a user. ``hashed_password`` is ``None`` for SSO-only accounts."""
+        resolved_dept = department or ("ADMIN" if str(role.value if hasattr(role, "value") else role).upper() == "ADMIN" else "FRONT_OFFICE")
         user = User(
             email=email.lower(),
             hashed_password=hashed_password,
             full_name=full_name,
             role=role,
-            department="ADMIN" if str(role.value if hasattr(role, "value") else role).upper() == "ADMIN" else "FRONT_OFFICE",
+            department=resolved_dept,
+            is_on_shift=is_on_shift,
+            is_active=True,
         )
         self.session.add(user)
         await self.session.commit()

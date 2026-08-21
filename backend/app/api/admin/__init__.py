@@ -76,11 +76,9 @@ async def create_user(
         hashed_password=hash_password(payload.password),
         full_name=payload.full_name,
         role=payload.role,
+        department=payload.department,
+        is_on_shift=payload.is_on_shift,
     )
-    user.department = payload.department
-    user.is_on_shift = payload.is_on_shift
-    await session.commit()
-    await session.refresh(user)
     return UserRead.model_validate(user)
 
 
