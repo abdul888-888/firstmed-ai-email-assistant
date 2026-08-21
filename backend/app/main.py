@@ -92,6 +92,25 @@ def create_app() -> FastAPI:
         if settings.backend_cors_origins not in cors_origins:
             cors_origins.append(settings.backend_cors_origins)
 
+    # Request correlation
+    app.add_middleware(RequestIDMiddleware)
+
+    # Rate limiting (Phase 13, local hardening) — see app.core.rate_limit.
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_middleware(SlowAPIMiddleware)
+
+    # Global unhandled exception handler to log and return clean JSON with CORS preserved
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request, exc: Exception):
+        logger.exception("unhandled_exception", path=request.url.path, error=str(exc))
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error occurred."},
+        )
+
+    # CORS - added last so it wraps all other middlewares and error handlers outermost
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
@@ -101,14 +120,6 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
         expose_headers=["*"],
     )
-
-    # Request correlation
-    app.add_middleware(RequestIDMiddleware)
-
-    # Rate limiting (Phase 13, local hardening) — see app.core.rate_limit.
-    app.state.limiter = limiter
-    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-    app.add_middleware(SlowAPIMiddleware)
 
     # Routes
     app.include_router(api_router, prefix=settings.api_v1_prefix)
