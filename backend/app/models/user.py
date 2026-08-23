@@ -1,11 +1,12 @@
 """User model and role enumeration."""
 
 from __future__ import annotations
+from datetime import datetime
+from sqlalchemy import Boolean, DateTime, Enum, String, Uuid
 
 import enum
 import uuid
 
-from sqlalchemy import Boolean, Enum, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -44,7 +45,7 @@ class User(Base, TimestampMixin):
     department: Mapped[str] = mapped_column(String(50), default="FRONT_OFFICE", nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_on_shift: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    shift_started_at: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    shift_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     def __repr__(self) -> str:  # pragma: no cover - debug helper
         return f"<User id={self.id} email={self.email!r} role={self.role.value}>"

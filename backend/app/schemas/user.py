@@ -35,7 +35,7 @@ class UserRead(UserBase):
 
     id: uuid.UUID
     is_active: bool
-    shift_started_at: str | None = None
+    shift_started_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

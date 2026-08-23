@@ -4,7 +4,7 @@ uvicorn app.main:app --reload
 """
 
 from __future__ import annotations
-
+import re
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -105,9 +105,18 @@ def create_app() -> FastAPI:
     async def global_exception_handler(request, exc: Exception):
         logger.exception("unhandled_exception", path=request.url.path, error=str(exc))
         from fastapi.responses import JSONResponse
+
+        origin = request.headers.get("origin")
+        response_headers: dict[str, str] = {}
+        if origin and (origin in cors_origins or re.match(r"^https://.*\.vercel\.app$", origin)):
+            response_headers["Access-Control-Allow-Origin"] = origin
+            response_headers["Access-Control-Allow-Credentials"] = "true"
+            response_headers["Vary"] = "Origin"
+
         return JSONResponse(
             status_code=500,
             content={"detail": "Internal server error occurred."},
+            headers=response_headers,
         )
 
     # CORS - added last so it wraps all other middlewares and error handlers outermost
