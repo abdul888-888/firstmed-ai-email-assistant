@@ -54,13 +54,24 @@ async def pull_gmail(
     if not settings.ai_configured:
         raise _NOT_CONFIGURED
     try:
-        return await WorkflowService(session).pull_gmail(
-            current_user, max_results=max_results
+        account = await ConnectedAccountRepository(session).get_by_user_id(current_user.id)
+        if account is None:
+            raise GmailNotConnectedError("No connected email account")
+        return await WorkflowService(session).pull_messages(
+            current_user,
+            account,
+            max_results=max_results,
+            query=DEFAULT_PULL_QUERY,
         )
     except GmailNotConnectedError as exc:
         raise _NOT_CONNECTED from exc
     except AINotConfiguredError as exc:
         raise _NOT_CONFIGURED from exc
+    except AIError as exc:
+        logger.warning("workflow.ai_failed", error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=f"AI request failed: {exc}"
+        ) from exc
     except GmailApiError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Gmail request failed: {exc}"

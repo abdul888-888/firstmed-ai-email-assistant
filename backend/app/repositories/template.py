@@ -54,3 +54,7 @@ class TemplateRepository:
         await self.session.commit()
         await self.session.refresh(tpl)
         return tpl
+
+    async def delete(self, template: Template) -> None:
+        await self.session.delete(template)
+        await self.session.commit()

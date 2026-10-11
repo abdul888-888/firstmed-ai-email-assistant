@@ -45,3 +45,4 @@ class IndexStats(BaseModel):
     total: int = 0
     gmail: int = 0
     notion: int = 0
+    firstmed: int = 0

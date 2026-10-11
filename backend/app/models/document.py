@@ -22,6 +22,7 @@ from app.models.types import PortableVector
 class DocumentSource(str, enum.Enum):
     gmail = "gmail"
     notion = "notion"
+    firstmed = "firstmed"
 
 
 class Document(Base, TimestampMixin):

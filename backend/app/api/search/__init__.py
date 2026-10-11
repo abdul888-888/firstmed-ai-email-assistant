@@ -65,6 +65,7 @@ async def stats(
         total=counts.get("total", 0),
         gmail=counts.get(DocumentSource.gmail.value, 0),
         notion=counts.get(DocumentSource.notion.value, 0),
+        firstmed=counts.get(DocumentSource.firstmed.value, 0),
     )
 
 

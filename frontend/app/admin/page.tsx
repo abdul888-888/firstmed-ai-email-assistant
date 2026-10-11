@@ -392,7 +392,7 @@ export default function AdminDashboardPage() {
                         onChange={(e) => setSlaAtRiskHours(Math.max(1, parseInt(e.target.value) || 12))}
                         className="w-20 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium"
                       />
-                      <span className="text-xs text-slate-600">If email is waiting longer than this, mark as "At Risk"</span>
+                      <span className="text-xs text-slate-600">If email is waiting longer than this, mark as &quot;At Risk&quot;</span>
                     </div>
                   </div>
                   <div className="space-y-2">
@@ -409,7 +409,7 @@ export default function AdminDashboardPage() {
                         onChange={(e) => setSlaOverdueHours(Math.max(1, parseInt(e.target.value) || 24))}
                         className="w-20 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium"
                       />
-                      <span className="text-xs text-slate-600">If email is waiting longer than this, mark as "Overdue"</span>
+                      <span className="text-xs text-slate-600">If email is waiting longer than this, mark as &quot;Overdue&quot;</span>
                     </div>
                   </div>
                 </div>

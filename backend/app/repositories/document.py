@@ -40,6 +40,19 @@ class DocumentRepository:
         )
         return result.scalar_one_or_none()
 
+    async def list_by_source(self, source: str, *, limit: int = 200) -> list[Document]:
+        result = await self.session.execute(
+            select(Document)
+            .where(Document.source == source)
+            .order_by(Document.title)
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def delete(self, doc: Document) -> None:
+        await self.session.delete(doc)
+        await self.session.commit()
+
     async def upsert(
         self,
         *,

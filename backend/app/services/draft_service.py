@@ -191,16 +191,17 @@ class DraftService:
         """
         query = f"{subject}\n{body}"
         terms = _significant_terms(body)
-        kb_hits = await self.search.search(
-            query, limit=max_context, sources=[DocumentSource.notion.value]
-        )
-        general_hits = await self.search.search(query, limit=max_context)
+        trusted_sources = [DocumentSource.notion.value, DocumentSource.firstmed.value]
+        kb_hits = await self.search.search(query, limit=max_context, sources=trusted_sources)
+        # Patient mail is intentionally excluded. FirstMed's requirements allow
+        # drafts to rely only on verified clinic knowledge, not prior messages.
+        general_hits = await self.search.search(query, limit=max_context, sources=trusted_sources)
 
         candidates = list(kb_hits) + list(general_hits)
         significant = [t for t in terms if t in _SIGNIFICANT_TERMS]
         if significant:
             direct = await self.search.repo.fetch_candidates(
-                significant, sources=[DocumentSource.notion.value], limit=max_context
+                significant, sources=trusted_sources, limit=max_context
             )
             candidates.extend(ScoredDocument(document=doc, score=0.0) for doc in direct)
 

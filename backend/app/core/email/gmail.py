@@ -243,13 +243,37 @@ class GmailProvider(BaseEmailProvider):
                 for msg_dict in message_ids:
                     try:
                         msg = await self.get_message(msg_dict["id"])
-                        messages.append(msg)
+                        if not msg.is_noise:
+                            messages.append(msg)
                     except EmailProviderError:
                         # Skip messages that cannot be fetched (rare, but possible).
                         logger.warning(
                             "gmail.message_fetch_failed",
                             message_id=msg_dict["id"],
                         )
+                # Gmail history also reports changes to sent/draft/promotional
+                # mail. If it yielded no actionable inbox message, perform a
+                # bounded query for the newest inbox mail instead of treating
+                # those noise events as a successful sync.
+                if not messages:
+                    logger.info(
+                        "gmail.history_no_actionable_messages_fallback_to_inbox_scan",
+                        user_id=str(self.account.user_id),
+                        max_results=max_results,
+                    )
+                    for msg_dict in await self._list_messages(
+                        max_results=max_results,
+                        query=query,
+                    ):
+                        try:
+                            msg = await self.get_message(msg_dict["id"])
+                            if not msg.is_noise:
+                                messages.append(msg)
+                        except EmailProviderError:
+                            logger.warning(
+                                "gmail.message_fetch_failed",
+                                message_id=msg_dict["id"],
+                            )
                 new_history_id = history_data.get("history_id", history_id)
                 return messages, new_history_id
 
@@ -265,7 +289,8 @@ class GmailProvider(BaseEmailProvider):
         for msg_dict in message_ids:
             try:
                 msg = await self.get_message(msg_dict["id"])
-                messages.append(msg)
+                if not msg.is_noise:
+                    messages.append(msg)
             except EmailProviderError:
                 logger.warning(
                     "gmail.message_fetch_failed",

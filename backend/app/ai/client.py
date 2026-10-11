@@ -19,6 +19,35 @@ DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
 DEFAULT_CLAUDE_MODEL = "claude-3-5-sonnet-20241022"
 
 
+def _api_key_value(value: Any) -> str | None:
+    """Normalize settings secrets before passing them to provider SDKs."""
+    if value is None:
+        return None
+    getter = getattr(value, "get_secret_value", None)
+    if callable(getter):
+        value = getter()
+    return str(value)
+
+
+def _anthropic_text(content: Any) -> str:
+    """Return all text blocks from an Anthropic response.
+
+    Responses can include more than one text block (for example when thinking
+    or tool use is enabled), so indexing the first block can silently truncate
+    a draft.
+    """
+    return "".join(
+        block.text
+        for block in content
+        if getattr(block, "type", None) == "text" and getattr(block, "text", None)
+    )
+
+
+def _supports_adaptive_thinking(model: str) -> bool:
+    """Adaptive thinking is available only on Claude 4.6+ models."""
+    return model.startswith("claude-opus-4-6") or model.startswith("claude-opus-4-7") or model.startswith("claude-opus-4-8")
+
+
 class AIError(Exception):
     """Base class for AI client errors."""
 
@@ -53,7 +82,7 @@ class AIClient:
         
         # Load API key based on provider
         if provider == "anthropic":
-            self._api_key = (
+            self._api_key = _api_key_value(
                 api_key
                 if api_key is not None
                 else os.getenv("ANTHROPIC_API_KEY") or getattr(settings, "anthropic_api_key", None)
@@ -61,7 +90,7 @@ class AIClient:
             if not self.model.startswith("claude"):
                 self.model = DEFAULT_CLAUDE_MODEL
         elif provider == "groq":
-            self._api_key = (
+            self._api_key = _api_key_value(
                 api_key
                 if api_key is not None
                 else os.getenv("GROQ_API_KEY") or getattr(settings, "groq_api_key", None)
@@ -101,16 +130,17 @@ class AIClient:
         client = self._ensure()
         try:
             if self.provider == "anthropic":
-                resp = await client.messages.create(
-                    model=self.model,
-                    max_tokens=max_tokens or getattr(settings, "ai_max_tokens", 4096),
-                    system=system,
-                    messages=[
-                        {"role": "user", "content": user},
-                    ],
-                    temperature=0.3,
-                )
-                return resp.content[0].text
+                request: dict[str, Any] = {
+                    "model": self.model,
+                    "max_tokens": max_tokens or getattr(settings, "ai_max_tokens", 4096),
+                    "system": system,
+                    "messages": [{"role": "user", "content": user}],
+                    "temperature": 0.3,
+                }
+                if thinking and _supports_adaptive_thinking(self.model):
+                    request["thinking"] = {"type": "adaptive"}
+                resp = await client.messages.create(**request)
+                return _anthropic_text(resp.content)
             else:  # groq
                 resp = await client.chat.completions.create(
                     model=self.model,
@@ -149,7 +179,7 @@ class AIClient:
                     ],
                     temperature=0.1,
                 )
-                text = resp.content[0].text
+                text = _anthropic_text(resp.content)
             else:  # groq
                 resp = await client.chat.completions.create(
                     model=self.model,

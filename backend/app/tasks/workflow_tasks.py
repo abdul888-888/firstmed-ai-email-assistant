@@ -36,7 +36,7 @@ from app.workers.celery_app import celery_app
 logger = get_logger(__name__)
 
 DEFAULT_PULL_QUERY = (
-    "in:inbox -category:promotions -category:social -category:updates -category:forums"
+    "in:inbox -in:sent -category:promotions -category:social -category:updates -category:forums"
 )
 
 # Errors worth retrying (transient I/O at the email provider/Anthropic API boundary).

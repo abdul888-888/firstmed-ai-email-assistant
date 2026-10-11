@@ -30,6 +30,14 @@ class TemplateRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class TemplateWrite(BaseModel):
+    key: str = Field(min_length=3, max_length=128, pattern=r"^[a-z0-9-]+$")
+    title: str = Field(min_length=3, max_length=256)
+    category: TemplateCategory = TemplateCategory.general
+    body: str = Field(min_length=10, max_length=20000)
+    is_active: bool = True
+
+
 class TemplateList(BaseModel):
     templates: list[TemplateRead] = Field(default_factory=list)
     count: int = 0

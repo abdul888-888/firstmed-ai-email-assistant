@@ -30,8 +30,8 @@ from dataclasses import dataclass
 from app.schemas.ai import Department, Intent, Urgency
 from app.schemas.review import ReviewClassification
 
-# Below this triage confidence, always route to a human regardless of intent
-# (covers the "unclear or conflicting information" exclusion).
+# Below this triage confidence, route to manual staff handling. Uncertainty by
+# itself is not a clinical condition and must not be labelled physician work.
 CONFIDENCE_THRESHOLD = 0.70
 
 # Intents that require clinical interpretation and must not be answered directly.
@@ -321,9 +321,9 @@ def classify_review(triage: dict, *, text: str = "") -> SafetyDecision:
         )
     if confidence < CONFIDENCE_THRESHOLD:
         return SafetyDecision(
-            ReviewClassification.NEEDS_PHYSICIAN_REVIEW,
+            ReviewClassification.ROUTE_TO_STAFF,
             f"confidence {confidence:.2f} below {CONFIDENCE_THRESHOLD:.2f} — "
-            "escalated for human review (unclear or conflicting information).",
+            "routed to staff for manual handling (unclear or conflicting information).",
             department,
         )
     return SafetyDecision(

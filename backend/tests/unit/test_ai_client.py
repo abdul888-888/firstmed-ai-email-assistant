@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import SecretStr
 from app.ai.client import AIClient, AIError, AINotConfiguredError
 
 
@@ -82,3 +83,9 @@ async def test_not_configured_raises():
     assert ai.configured is False
     with pytest.raises(AINotConfiguredError):
         await ai.text(system="s", user="u")
+
+
+def test_secretstr_api_key_is_unwrapped_before_sdk_use():
+    ai = AIClient(api_key=SecretStr("test-key"))
+    assert ai.configured is True
+    assert ai._api_key == "test-key"

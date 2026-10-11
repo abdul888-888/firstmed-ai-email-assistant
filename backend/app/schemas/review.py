@@ -67,8 +67,11 @@ class DraftReviewRead(BaseModel):
     """A persisted AI decision + draft awaiting (or past) human review."""
 
     id: uuid.UUID
-    gmail_message_id: str
-    gmail_thread_id: str = ""
+    # The persistence layer is provider-agnostic (Gmail, Outlook, IMAP), while
+    # the current dashboard contract still exposes the legacy Gmail names.
+    # Map the ORM attributes explicitly so Pydantic can serialize real reviews.
+    gmail_message_id: str = Field(validation_alias="provider_message_id")
+    gmail_thread_id: str = Field(default="", validation_alias="provider_thread_id")
     sender: str = ""
     subject: str = ""
     intent: str
@@ -82,7 +85,7 @@ class DraftReviewRead(BaseModel):
     citations: list[ReviewCitation] = Field(default_factory=list)
     model: str = ""
     status: ReviewStatus
-    gmail_draft_id: str | None = None
+    gmail_draft_id: str | None = Field(default=None, validation_alias="provider_draft_id")
     review_note: str | None = None
     reviewed_at: datetime | None = None
     sent_at: datetime | None = None

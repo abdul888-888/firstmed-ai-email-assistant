@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { loginWithEmailPassword, setInvitePassword, verify2FACode } from "@/lib/api";
-import { setToken } from "@/lib/auth";
+import { setToken, startGoogleSignIn } from "@/lib/auth";
 
 function LoginForm() {
   const router = useRouter();
@@ -29,6 +29,7 @@ function LoginForm() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const googleAuthEnabled = process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === "true";
 
   useEffect(() => {
     if (inviteToken) setIsInviteFlow(true);
@@ -203,7 +204,7 @@ function LoginForm() {
                   {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : isInviteFlow ? "Set Password & Enter" : "Log In"}
                 </Button>
 
-                {!isInviteFlow && (
+                {!isInviteFlow && googleAuthEnabled && (
                   <>
                     <div className="relative my-4">
                       <div className="absolute inset-0 flex items-center">
@@ -219,14 +220,13 @@ function LoginForm() {
                       variant="outline"
                       className="w-full border-slate-300 text-slate-700 hover:bg-slate-50"
                       onClick={async () => {
+                        setLoading(true);
+                        setError(null);
                         try {
-                          const res = await fetch("https://api-production-c575.up.railway.app/api/v1/auth/google/login");
-                          const data = await res.json();
-                          if (data.authorization_url) {
-                            window.location.href = data.authorization_url;
-                          }
-                        } catch (e) {
-                          console.error("SSO failed", e);
+                          await startGoogleSignIn("/reviews");
+                        } catch {
+                          setError("Google sign-in is temporarily unavailable. Please try again.");
+                          setLoading(false);
                         }
                       }}
                     >

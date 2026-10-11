@@ -47,7 +47,7 @@ def _triage(**over):
         # Irrelevant / spam.
         (_triage(intent="irrelevant"), IRRELEVANT),
         # Confidence boundary: below threshold escalates, at/above stays admin.
-        (_triage(confidence=CONFIDENCE_THRESHOLD - 0.01), REVIEW),
+        (_triage(confidence=CONFIDENCE_THRESHOLD - 0.01), STAFF),
         (_triage(confidence=CONFIDENCE_THRESHOLD), ADMIN),
     ],
 )
@@ -60,7 +60,7 @@ def test_classify_review_truth_table(triage, expected):
 def test_classify_review_handles_bad_confidence():
     # Non-numeric confidence is treated as 0.0 → escalate.
     decision = classify_review(_triage(confidence="n/a"))
-    assert decision.classification == REVIEW
+    assert decision.classification == STAFF
 
 
 def test_classify_review_default_department_carries_through():

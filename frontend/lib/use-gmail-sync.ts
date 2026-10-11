@@ -21,6 +21,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   getPullGmailStatus,
+  pullGmail,
   pullGmailAsync,
   type PullResult,
 } from "@/lib/api";
@@ -32,6 +33,7 @@ const LAST_SYNCED_KEY = "firstmed_last_synced_at";
 // giving up and telling the user a worker might not be running.
 const POLL_INTERVAL_MS = 2_000;
 const POLL_TIMEOUT_MS = 180_000;
+const USE_ASYNC_SYNC = process.env.NEXT_PUBLIC_ASYNC_GMAIL_SYNC === "true";
 
 function readLastSynced(): number | null {
   if (typeof window === "undefined") return null;
@@ -121,6 +123,22 @@ export function useGmailSync(opts?: {
     lockTimer.current = setTimeout(() => setLocked(false), LOCK_MS);
 
     try {
+      // Local development normally runs only the API and frontend. Fall back to
+      // the synchronous endpoint unless a Redis-backed Celery worker has been
+      // explicitly enabled.
+      if (!USE_ASYNC_SYNC) {
+        const result = await pullGmail(maxResults);
+        const stamp = Date.now();
+        setLastResult(result);
+        setLastSyncedAt(stamp);
+        setNow(stamp);
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem(LAST_SYNCED_KEY, String(stamp));
+        }
+        onComplete?.(result);
+        return;
+      }
+
       const { task_id } = await pullGmailAsync(maxResults);
 
       const startedAt = Date.now();

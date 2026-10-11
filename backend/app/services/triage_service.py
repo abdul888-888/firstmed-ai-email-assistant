@@ -6,6 +6,7 @@ Uses Claude with a constrained JSON schema so the result always maps onto the
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.ai.client import AIClient, get_ai_client
@@ -37,6 +38,43 @@ TRIAGE_SCHEMA: dict[str, Any] = {
 }
 
 _TRIAGE_MAX_TOKENS = 1024
+
+# Narrow, deterministic labels for routine front-office questions. This never
+# supplies an answer: the workflow still needs an approved template or verified
+# knowledge-base match before it creates a draft.
+_UNSAFE_ADMIN_CONTEXT = re.compile(
+    r"\b(book|booking|schedule|reschedule|cancel|cancellation|change my appointment|"
+    r"result|symptom|pain|diagnos|treatment|medication|prescription|emergency|complaint|"
+    r"refund|overcharg|dispute|legal)\b",
+    re.IGNORECASE,
+)
+_ADMIN_PATTERNS: tuple[tuple[Intent, re.Pattern[str]], ...] = (
+    (Intent.pricing, re.compile(r"\b(price|pricing|cost|fee|how much)\b", re.IGNORECASE)),
+    (Intent.parking, re.compile(r"\b(parking|park|validation)\b", re.IGNORECASE)),
+    (
+        Intent.opening_hours,
+        re.compile(
+            r"\b(clinic hours|office hours|opening hours|operating hours|working hours|"
+            r"opening time|closing time|what hours|hours are you open|when (?:do|are) you open|"
+            r"when (?:do|are) you close)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (Intent.contact_information, re.compile(r"\b(phone number|telephone|contact details|email address|location|directions|address)\b", re.IGNORECASE)),
+    (Intent.preparation_instructions, re.compile(r"\b(prepare|preparation|fasting|fast before|what should i bring)\b", re.IGNORECASE)),
+    (Intent.service_information, re.compile(r"\b(do you offer|do you provide|is .+ available|availability of|have .+ service)\b", re.IGNORECASE)),
+)
+
+
+def _clear_administrative_intent(subject: str, body: str) -> Intent | None:
+    """Recognise unambiguous, non-clinical administrative requests only."""
+    text = f"{subject}\n{body}"
+    if _UNSAFE_ADMIN_CONTEXT.search(text):
+        return None
+    for intent, pattern in _ADMIN_PATTERNS:
+        if pattern.search(text):
+            return intent
+    return None
 
 
 class TriageService:
@@ -71,4 +109,9 @@ class TriageService:
 
         data["confidence"] = min(1.0, max(0.0, confidence))
         data["requires_human_review"] = True
+        admin_intent = _clear_administrative_intent(subject, body)
+        if admin_intent is not None:
+            data["intent"] = admin_intent.value
+            data["department"] = Department.front_office.value
+            data["confidence"] = max(data["confidence"], 0.85)
         return data

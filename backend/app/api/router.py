@@ -17,6 +17,7 @@ from app.api import (
     email,
     gmail,
     healzz,
+    knowledge,
     notion,
     reviews,
     search,
@@ -36,6 +37,7 @@ api_router.include_router(auth_routes.router)
 api_router.include_router(email.router)
 api_router.include_router(gmail.router)
 api_router.include_router(notion.router)
+api_router.include_router(knowledge.router)
 api_router.include_router(search.router)
 api_router.include_router(ai.router)
 api_router.include_router(healzz.router)
